@@ -102,7 +102,7 @@ def test(clf, dataset_path):
 
     # Evaluate
     print("\nEvaluating...")
-    metrics = evaluate(clf, X, y, show_samples=True)
+    metrics = evaluate(clf, X, y, show_samples=False)
 
     print("Metrics:")
     counter = 0
@@ -117,12 +117,12 @@ def test(clf, dataset_path):
 def train_and_test():
     # image_path = "datasets/judybats.jpg"
     # detector(image_path)
-    dataset_path = r"C:\Users\salva\Documents\Programacion\Datasets\Faces\CBCL Face Database\compressed"
-    #dataset_path = r"/Users/salvacarrion/Documents/Programming/Datasets/Faces/CBCL Face Database/compressed"
+    #dataset_path = r"C:\Users\salva\Documents\Programacion\Datasets\Faces\CBCL Face Database\compressed"
+    dataset_path = r"/Users/salvacarrion/Documents/Programming/Datasets/Faces/CBCL Face Database/compressed"
 
     # Training
     clf = ViolaJones.load("weights/all_da/cvj_weights_1554151172.pkl")
-    #clf = train(dataset_path)
+    clf.train(dataset_path)
 
     # Test
     test(clf, dataset_path)
