@@ -26,9 +26,9 @@ class WeakClassifier:
     def train(self, X, y, weights, total_pos_weights=None, total_neg_weights=None):
         # Compute total pos/neg weights if not given
         if not total_pos_weights:
-            total_pos_weights = np.sum(weights[np.where(weights == 1)])
+            total_pos_weights = np.sum(weights[np.where(y == 1)])
         if not total_neg_weights:
-            total_neg_weights = np.sum(weights[np.where(weights == 0)])
+            total_neg_weights = np.sum(weights[np.where(y == 0)])
 
         # Sort features according to their numeric value
         sorted_features = sorted(zip(weights, X, y), key=lambda a: a[1])
