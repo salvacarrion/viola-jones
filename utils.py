@@ -47,7 +47,14 @@ def integral_image(img):
     return ii
 
 
-def build_features(img_w, img_h, shift=1.5, scale_factor=1.25):
+def integral_image_pow2(img):
+    """
+    Squared version of II
+    """
+    return integral_image(img**2)
+
+
+def build_features(img_w, img_h, shift=1, scale_factor=1.25, min_w=4, min_h=4):
     """
     Generate values from Haar features
 
@@ -56,8 +63,8 @@ def build_features(img_w, img_h, shift=1.5, scale_factor=1.25):
     features = []  # [Tuple(positive regions, negative regions),...]
 
     # Scale feature window
-    for w_width in range(1, img_w + 1):
-        for w_height in range(1, img_h + 1):
+    for w_width in range(min_w, img_w + 1):
+        for w_height in range(min_h, img_h + 1):
 
             # Walk through all the image
             x = 0
@@ -93,8 +100,8 @@ def build_features(img_w, img_h, shift=1.5, scale_factor=1.25):
                     if x + w_width * 2 < img_w and y + w_height * 2 < img_h:
                         features.append(HaarFeature([immediate, bottom_right], [bottom, right]))
 
-                    y += 1
-                x += 1
+                    y += shift
+                x += shift
     return features  # np.array(features)
 
 
