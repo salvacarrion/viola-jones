@@ -1,0 +1,142 @@
+Notes:
+layers=[1, 5]
+---------------------------------------------------------------------------------------------
+
+Starting scripting...
+Loading new training set...
+New dataset saved!
+
+Training Viola-Jones...
+Preparing data...
+Summary input data:
+        - Total faces: 32 (32.00%)
+        - Total non-faces: 68 (68.00%)
+        - Total samples: 100
+        - Size (WxH): 19x19
+Generating integral images...
+        - Num. integral images: 100
+        - II/s: 00:00:0.00070576
+        - Total time: 00:00:0.07061195
+Building features...
+        - Num. features: 42,984
+        - F/s: 00:00:0.00000776
+        - Total time: 00:00:0.33341694
+Applying features...
+Processing features |################################| 100% - 0:00:39 - 0:00:00
+
+Applied features file saved!
+        - Num. features applied: 1,847,624,256
+        - FA/s: 00:00:0.00000002
+        - Total time: 00:00:39.72731709
+[CascadeClassifier] Training 1 of out 2 layers
+Training...
+Training 1 classifiers out of 1
+Training weak classifiers...
+Training weak classifiers |################################| 100% - 0:00:09 - 0:00:00
+
+        - Num. weak classifiers: 42,984
+        - WC/s: 00:00:0.00022579
+        - Total time: 00:00:9.70552397
+Selecting best weak classifiers...
+Selecting best weak classifier |################################| 100% - 0:00:03 - 0:00:00
+
+        - Num. weak classifiers: 42,984
+        - WC/s: 00:00:0.00007218
+        - Total time: 00:00:3.10266805
+<== Training
+        - Num. classifiers: 1
+        - FA/s: 00:00:12.80865526
+        - Total time: 00:00:12.80866528
+[CascadeClassifier] Training 2 of out 2 layers
+Training...
+Training 1 classifiers out of 5
+Training weak classifiers...
+Training weak classifiers |################################| 100% - 0:00:05 - 0:00:00
+
+        - Num. weak classifiers: 42,984
+        - WC/s: 00:00:0.00012143
+        - Total time: 00:00:5.21941280
+Selecting best weak classifiers...
+Selecting best weak classifier |################################| 100% - 0:00:03 - 0:00:00
+
+        - Num. weak classifiers: 42,984
+        - WC/s: 00:00:0.00007079
+        - Total time: 00:00:3.04299593
+Training 2 classifiers out of 5
+Training weak classifiers...
+Training weak classifiers |################################| 100% - 0:00:05 - 0:00:00
+
+        - Num. weak classifiers: 42,984
+        - WC/s: 00:00:0.00012184
+        - Total time: 00:00:5.23713088
+Selecting best weak classifiers...
+Selecting best weak classifier |################################| 100% - 0:00:03 - 0:00:00
+
+        - Num. weak classifiers: 42,984
+        - WC/s: 00:00:0.00007096
+        - Total time: 00:00:3.04998112
+Training 3 classifiers out of 5
+Training weak classifiers...
+Training weak classifiers |################################| 100% - 0:00:05 - 0:00:00
+
+        - Num. weak classifiers: 42,984
+        - WC/s: 00:00:0.00012825
+        - Total time: 00:00:5.51264596
+Selecting best weak classifiers...
+Selecting best weak classifier |################################| 100% - 0:00:03 - 0:00:00
+
+        - Num. weak classifiers: 42,984
+        - WC/s: 00:00:0.00007461
+        - Total time: 00:00:3.20701122
+Training 4 classifiers out of 5
+Training weak classifiers...
+Training weak classifiers |################################| 100% - 0:00:05 - 0:00:00
+
+        - Num. weak classifiers: 42,984
+        - WC/s: 00:00:0.00012775
+        - Total time: 00:00:5.49113703
+Selecting best weak classifiers...
+Selecting best weak classifier |################################| 100% - 0:00:03 - 0:00:00
+
+        - Num. weak classifiers: 42,984
+        - WC/s: 00:00:0.00007871
+        - Total time: 00:00:3.38329697
+Training 5 classifiers out of 5
+Training weak classifiers...
+Training weak classifiers |################################| 100% - 0:00:05 - 0:00:00
+
+        - Num. weak classifiers: 42,984
+        - WC/s: 00:00:0.00013332
+        - Total time: 00:00:5.73049402
+Selecting best weak classifiers...
+Selecting best weak classifier |################################| 100% - 0:00:03 - 0:00:00
+
+        - Num. weak classifiers: 42,984
+        - WC/s: 00:00:0.00007974
+        - Total time: 00:00:3.42770696
+<== Training
+        - Num. classifiers: 5
+        - FA/s: 00:00:8.66060820
+        - Total time: 00:00:43.30305195
+Training finished!
+
+Saving weights...
+Weights saved!
+
+Loading test set...
+
+Evaluating...
+Metrics:
+        - true_positive: 162
+        - true_negative: 20,908
+        - false_positive: 2,665
+        - false_negative: 310
+        - accuracy: 0.876
+        - precision: 0.057
+        - recall: 0.343
+        - specifity: 0.887
+        - f1: 0.098
+
+Finished!
+
+Total time (Training+test): 00:01:58.35101581

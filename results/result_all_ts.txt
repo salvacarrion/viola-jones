@@ -1,0 +1,142 @@
+Notes:
+layers=[1, 5]
+---------------------------------------------------------------------------------------------
+
+Starting scripting...
+Loading new training set...
+New dataset saved!
+
+Training Viola-Jones...
+Preparing data...
+Summary input data:
+        - Total faces: 4,858 (51.65%)
+        - Total non-faces: 4,548 (48.35%)
+        - Total samples: 9,406
+        - Size (WxH): 19x19
+Generating integral images...
+        - Num. integral images: 9,406
+        - II/s: 00:00:0.00072354
+        - Total time: 00:00:6.80563378
+Building features...
+        - Num. features: 42,984
+        - F/s: 00:00:0.00000480
+        - Total time: 00:00:0.20652270
+Applying features...
+?[KProcessing features |################################| 100% - 0:43:48 - 0:00:00
+?[?25h
+Applied features file saved!
+        - Num. features applied: 1,847,624,256
+        - FA/s: 00:00:0.00000142
+        - Total time: 00:43:48.12820315
+[CascadeClassifier] Training 1 of out 2 layers
+Training...
+Training 1 classifiers out of 1
+Training weak classifiers...
+?[KTraining weak classifiers |################################| 100% - 0:12:11 - 0:00:00
+?[?25h
+        - Num. weak classifiers: 42,984
+        - WC/s: 00:00:0.01700675
+        - Total time: 00:12:11.01810241
+Selecting best weak classifiers...
+?[KSelecting best weak classifier |################################| 100% - 0:00:09 - 0:00:00
+?[?25h
+        - Num. weak classifiers: 42,984
+        - WC/s: 00:00:0.00022574
+        - Total time: 00:00:9.70336342
+<== Training
+        - Num. classifiers: 1
+        - FA/s: 00:12:20.75288439
+        - Total time: 00:12:20.75288439
+[CascadeClassifier] Training 2 of out 2 layers
+Training...
+Training 1 classifiers out of 5
+Training weak classifiers...
+?[KTraining weak classifiers |################################| 100% - 0:06:49 - 0:00:00
+?[?25h
+        - Num. weak classifiers: 42,984
+        - WC/s: 00:00:0.00952241
+        - Total time: 00:06:49.31112385
+Selecting best weak classifiers...
+?[KSelecting best weak classifier |################################| 100% - 0:00:07 - 0:00:00
+?[?25h
+        - Num. weak classifiers: 42,984
+        - WC/s: 00:00:0.00018325
+        - Total time: 00:00:7.87664890
+Training 2 classifiers out of 5
+Training weak classifiers...
+?[KTraining weak classifiers |################################| 100% - 0:06:48 - 0:00:00
+?[?25h
+        - Num. weak classifiers: 42,984
+        - WC/s: 00:00:0.00949660
+        - Total time: 00:06:48.20198226
+Selecting best weak classifiers...
+?[KSelecting best weak classifier |################################| 100% - 0:00:08 - 0:00:00
+?[?25h
+        - Num. weak classifiers: 42,984
+        - WC/s: 00:00:0.00019304
+        - Total time: 00:00:8.29751468
+Training 3 classifiers out of 5
+Training weak classifiers...
+?[KTraining weak classifiers |################################| 100% - 0:06:56 - 0:00:00
+?[?25h
+        - Num. weak classifiers: 42,984
+        - WC/s: 00:00:0.00968306
+        - Total time: 00:06:56.21657991
+Selecting best weak classifiers...
+?[KSelecting best weak classifier |################################| 100% - 0:00:08 - 0:00:00
+?[?25h
+        - Num. weak classifiers: 42,984
+        - WC/s: 00:00:0.00019218
+        - Total time: 00:00:8.26086259
+Training 4 classifiers out of 5
+Training weak classifiers...
+?[KTraining weak classifiers |################################| 100% - 0:07:03 - 0:00:00
+?[?25h
+        - Num. weak classifiers: 42,984
+        - WC/s: 00:00:0.00985786
+        - Total time: 00:07:3.73032951
+Selecting best weak classifiers...
+?[KSelecting best weak classifier |################################| 100% - 0:00:08 - 0:00:00
+?[?25h
+        - Num. weak classifiers: 42,984
+        - WC/s: 00:00:0.00019485
+        - Total time: 00:00:8.37523246
+Training 5 classifiers out of 5
+Training weak classifiers...
+?[KTraining weak classifiers |################################| 100% - 0:06:54 - 0:00:00
+?[?25h
+        - Num. weak classifiers: 42,984
+        - WC/s: 00:00:0.00963807
+        - Total time: 00:06:54.28299379
+Selecting best weak classifiers...
+?[KSelecting best weak classifier |################################| 100% - 0:00:08 - 0:00:00
+?[?25h
+        - Num. weak classifiers: 42,984
+        - WC/s: 00:00:0.00019175
+        - Total time: 00:00:8.24200153
+<== Training
+        - Num. classifiers: 5
+        - FA/s: 00:07:2.57454572
+        - Total time: 00:35:12.87272859
+Training finished!
+
+Saving weights...
+Weights saved!
+
+Loading test set...
+
+Evaluating...
+Metrics:
+        - true_positive: 83
+        - true_negative: 22,540
+        - false_positive: 1,033
+        - false_negative: 389
+        - accuracy: 0.941
+        - precision: 0.074
+        - recall: 0.176
+        - specifity: 0.956
+        - f1: 0.105
+
+Finished!
+
+Total time (Training+test): 01:31:55.88121057
