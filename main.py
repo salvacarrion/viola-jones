@@ -47,7 +47,7 @@ def data_augmentation(X, y):
 
 def train(dataset_path):
     # Load precomputed dataset
-    test_size = "all_da"
+    test_size = 100
     features_path = r"./weights/{}/".format(test_size)
     try:
         X = np.load(features_path + "x" + ".npy")
@@ -121,8 +121,8 @@ def train_and_test():
     dataset_path = r"/Users/salvacarrion/Documents/Programming/Datasets/Faces/CBCL Face Database/compressed"
 
     # Training
-    clf = ViolaJones.load("weights/all_da/cvj_weights_1554151172.pkl")
-    clf.train(dataset_path)
+    #clf = ViolaJones.load("weights/all_da/cvj_weights_1554151172.pkl")
+    clf = train(dataset_path)
 
     # Test
     test(clf, dataset_path)

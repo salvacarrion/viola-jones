@@ -32,11 +32,11 @@ class AdaBoost:
             print("Training %d classifiers out of %d" % (t+1, self.n_estimators))
 
             # Normalize weights
-            s = np.sum(weights)
-            if s == 0.0:
-                print("[WARNING] EARLING STOP. WEIGHTS ZERO.")
+            w_sum = np.sum(weights)
+            if w_sum == 0.0:
+                print("[WARNING] EARLY STOP. WEIGHTS ARE ZERO.")
                 break
-            weights = weights / s  #np.linalg.norm(weights)
+            weights = weights / w_sum  #np.linalg.norm(weights)
 
             # Train weak classifiers (one per feature)
             print("Training weak classifiers...")
@@ -60,9 +60,7 @@ class AdaBoost:
                 alpha = math.log(1.0 / (beta + 1e-18))  # Avoid division by zero
 
                 # Update weights
-                for i in range(len(incorrectness)):
-                    weights[i] = weights[i] * (beta ** (1 - incorrectness[i]))
-                #weights = np.multiply(weights, beta ** (1 - incorrectness))
+                weights = np.multiply(weights, beta ** (1 - incorrectness))
 
                 # Save parameters
                 self.alphas.append(alpha)
