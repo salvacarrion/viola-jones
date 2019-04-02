@@ -14,7 +14,7 @@ class ViolaJones:
         self.layers = layers  # list with the number T of weak classifiers
         self.clfs = []
         self.base_width, self.base_height = 19, 19  # Size of the images from training dataset
-        self.base_scale, self.shift = 1.5, 2
+        self.base_scale, self.shift = 1.25, 2
         self.features_path = features_path  # Path to save the features
 
     def train(self, X, y):
@@ -81,6 +81,7 @@ class ViolaJones:
             print("[CascadeClassifier] Training {} of out {} layers".format(i+1, len(self.layers)))
             if len(neg_indices) == 0:
                 print('Early stop. All samples were correctly classify.')
+                break
 
             # Merge indices and shuffle
             tr_idxs = np.concatenate([pos_indices, neg_indices])
@@ -88,7 +89,7 @@ class ViolaJones:
 
             # Train Viola-Jones (AdaBoost)
             clf = AdaBoost(n_estimators=t)
-            clf.train(X_f[:, tr_idxs], y[tr_idxs], features)
+            clf.train(X_f[:, tr_idxs], y[tr_idxs], features, X_ii[tr_idxs])
             self.clfs.append(clf)
 
             # Find which non-faces where label as a face

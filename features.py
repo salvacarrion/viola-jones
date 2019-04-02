@@ -13,10 +13,15 @@ class RectangleRegion:
     def compute_region(self, ii, scale=1.0):
         # D(all) - C(left) - B(top) + A(corner)
 
-        x1 = self.x
-        y1 = self.y
-        x2 = x1 + self.width - 1
-        y2 = y1 + self.height - 1
+        # x1 = self.x
+        # y1 = self.y
+        # x2 = x1 + self.width - 1
+        # y2 = y1 + self.height - 1
+
+        x1 = int(self.x * scale)
+        y1 = int(self.y * scale)
+        x2 = x1 + int(self.width * scale) - 1
+        y2 = y1 + int(self.height * scale) - 1
 
         S = int(ii[x2, y2])
         if x1 > 0: S -= int(ii[x1-1, y2])

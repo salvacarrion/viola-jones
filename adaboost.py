@@ -11,7 +11,7 @@ class AdaBoost:
         self.alphas = []
         self.clfs = []
 
-    def train(self, X, y, features):
+    def train(self, X, y, features, X_ii):
         pos_num = np.sum(y)
         neg_num = len(y)-pos_num
         weights = np.zeros(len(y), dtype=np.float32)
@@ -50,6 +50,7 @@ class AdaBoost:
             start_time2 = time.time()
             print("Selecting best weak classifiers...")
             clf, error, incorrectness = self.select_best(weak_classifiers, X, y, weights)
+            #clf, error, incorrectness = self.select_best2(weak_classifiers, weights, X_ii, y,)
             print("\t- Num. weak classifiers: {:,}".format(len(weak_classifiers)))
             print("\t- WC/s: " + get_pretty_time(start_time2, divisor=len(weak_classifiers)))
             print("\t- Total time: " + get_pretty_time(start_time2))
@@ -124,6 +125,28 @@ class AdaBoost:
         bar.finish()
 
         return best_clf, min_error, best_accuracy
+
+    def select_best2(self, classifiers, weights, X_ii, y):
+        """
+        Selects the best weak classifier for the given weights
+          Args:
+            classifiers: An array of weak classifiers
+            weights: An array of weights corresponding to each training example
+            training_data: An array of tuples. The first element is the numpy array of shape (m, n) representing the integral image. The second element is its classification (1 or 0)
+          Returns:
+            A tuple containing the best classifier, its error, and an array of its accuracy
+        """
+        best_clf, best_error, best_accuracy = None, float('inf'), None
+        for clf in classifiers:
+            error, accuracy = 0, []
+            for xii_i, yi, w in zip(X_ii, y, weights):
+                correctness = abs(clf.classify(xii_i) - yi)
+                accuracy.append(correctness)
+                error += w * correctness
+            error = error / len(X_ii)
+            if error < best_error:
+                best_clf, best_error, best_accuracy = clf, error, accuracy
+        return best_clf, best_error, np.array(best_accuracy)
 
     def classify(self, X, scale=1.0):
         total = sum(list(map(lambda x: x[0] * x[1].classify(X, scale), zip(self.alphas, self.clfs))))  # Weak classifiers

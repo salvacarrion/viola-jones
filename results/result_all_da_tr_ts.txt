@@ -1,0 +1,670 @@
+Starting scripting...
+Loading new training set...
+New dataset saved!
+Training Viola-Jones...
+Preparing data...
+Summary input data:
+	- Total faces: 4,858 (51.65%)
+	- Total non-faces: 4,548 (48.35%)
+	- Total samples: 9,406
+	- Size (WxH): 19x19
+Generating integral images...
+	- Num. integral images: 9,406
+	- II/s: 00:00:0.00067118
+	- Total time: 00:00:6.31318998
+Building features...
+	- Num. features: 11,376
+	- F/s: 00:00:0.00000568
+	- Total time: 00:00:0.06466794
+Applying features...
+Applied features file saved!
+	- Num. features applied: 129,413,376
+	- FA/s: 00:00:0.00000689
+	- Total time: 00:14:52.07614517
+[CascadeClassifier] Training 1 of out 4 layers
+Training...
+Training 1 classifiers out of 1
+Training weak classifiers...
+	- Num. weak classifiers: 11,376
+	- WC/s: 00:00:0.01649707
+	- Total time: 00:03:7.67070198
+Selecting best weak classifiers...
+	- Num. weak classifiers: 11,376
+	- WC/s: 00:00:0.00022003
+	- Total time: 00:00:2.50307202
+<== Training
+	- Num. classifiers: 1
+	- FA/s: 00:03:10.17419577
+	- Total time: 00:03:10.17420697
+[CascadeClassifier] Training 2 of out 4 layers
+Training...
+Training 1 classifiers out of 5
+Training weak classifiers...
+	- Num. weak classifiers: 11,376
+	- WC/s: 00:00:0.00980201
+	- Total time: 00:01:51.50773406
+Selecting best weak classifiers...
+	- Num. weak classifiers: 11,376
+	- WC/s: 00:00:0.00015473
+	- Total time: 00:00:1.76026201
+Training 2 classifiers out of 5
+Training weak classifiers...
+	- Num. weak classifiers: 11,376
+	- WC/s: 00:00:0.00912113
+	- Total time: 00:01:43.76199102
+Selecting best weak classifiers...
+	- Num. weak classifiers: 11,376
+	- WC/s: 00:00:0.00014534
+	- Total time: 00:00:1.65344477
+Training 3 classifiers out of 5
+Training weak classifiers...
+	- Num. weak classifiers: 11,376
+	- WC/s: 00:00:0.00910379
+	- Total time: 00:01:43.56472707
+Selecting best weak classifiers...
+	- Num. weak classifiers: 11,376
+	- WC/s: 00:00:0.00014577
+	- Total time: 00:00:1.65834904
+Training 4 classifiers out of 5
+Training weak classifiers...
+	- Num. weak classifiers: 11,376
+	- WC/s: 00:00:0.00913118
+	- Total time: 00:01:43.87628388
+Selecting best weak classifiers...
+	- Num. weak classifiers: 11,376
+	- WC/s: 00:00:0.00014580
+	- Total time: 00:00:1.65868211
+Training 5 classifiers out of 5
+Training weak classifiers...
+	- Num. weak classifiers: 11,376
+	- WC/s: 00:00:0.00907292
+	- Total time: 00:01:43.21357512
+Selecting best weak classifiers...
+	- Num. weak classifiers: 11,376
+	- WC/s: 00:00:0.00014800
+	- Total time: 00:00:1.68362188
+<== Training
+	- Num. classifiers: 5
+	- FA/s: 00:01:46.86794820
+	- Total time: 00:08:54.33975077
+[CascadeClassifier] Training 3 of out 4 layers
+Training...
+Training 1 classifiers out of 10
+Training weak classifiers...
+	- Num. weak classifiers: 11,376
+	- WC/s: 00:00:0.00928020
+	- Total time: 00:01:45.57152009
+Selecting best weak classifiers...
+	- Num. weak classifiers: 11,376
+	- WC/s: 00:00:0.00014555
+	- Total time: 00:00:1.65580273
+Training 2 classifiers out of 10
+Training weak classifiers...
+	- Num. weak classifiers: 11,376
+	- WC/s: 00:00:0.00862846
+	- Total time: 00:01:38.15737891
+Selecting best weak classifiers...
+	- Num. weak classifiers: 11,376
+	- WC/s: 00:00:0.00014196
+	- Total time: 00:00:1.61493492
+Training 3 classifiers out of 10
+Training weak classifiers...
+	- Num. weak classifiers: 11,376
+	- WC/s: 00:00:0.59852995
+	- Total time: 01:53:28.87674809
+Selecting best weak classifiers...
+	- Num. weak classifiers: 11,376
+	- WC/s: 00:00:0.00014777
+	- Total time: 00:00:1.68103814
+Training 4 classifiers out of 10
+Training weak classifiers...
+	- Num. weak classifiers: 11,376
+	- WC/s: 00:00:0.00889108
+	- Total time: 00:01:41.14495993
+Selecting best weak classifiers...
+	- Num. weak classifiers: 11,376
+	- WC/s: 00:00:0.00014345
+	- Total time: 00:00:1.63190317
+Training 5 classifiers out of 10
+Training weak classifiers...
+	- Num. weak classifiers: 11,376
+	- WC/s: 00:00:0.00879660
+	- Total time: 00:01:40.07011604
+Selecting best weak classifiers...
+	- Num. weak classifiers: 11,376
+	- WC/s: 00:00:0.00014429
+	- Total time: 00:00:1.64142799
+Training 6 classifiers out of 10
+Training weak classifiers...
+	- Num. weak classifiers: 11,376
+	- WC/s: 00:00:0.10346681
+	- Total time: 00:19:37.03846598
+Selecting best weak classifiers...
+	- Num. weak classifiers: 11,376
+	- WC/s: 00:00:0.00014836
+	- Total time: 00:00:1.68780589
+Training 7 classifiers out of 10
+Training weak classifiers...
+	- Num. weak classifiers: 11,376
+	- WC/s: 00:00:0.00925894
+	- Total time: 00:01:45.32978034
+Selecting best weak classifiers...
+	- Num. weak classifiers: 11,376
+	- WC/s: 00:00:0.00014775
+	- Total time: 00:00:1.68086791
+Training 8 classifiers out of 10
+Training weak classifiers...
+	- Num. weak classifiers: 11,376
+	- WC/s: 00:00:0.00922644
+	- Total time: 00:01:44.95995808
+Selecting best weak classifiers...
+	- Num. weak classifiers: 11,376
+	- WC/s: 00:00:0.00014727
+	- Total time: 00:00:1.67531371
+Training 9 classifiers out of 10
+Training weak classifiers...
+	- Num. weak classifiers: 11,376
+	- WC/s: 00:00:0.00986967
+	- Total time: 00:01:52.27733684
+Selecting best weak classifiers...
+	- Num. weak classifiers: 11,376
+	- WC/s: 00:00:0.00016683
+	- Total time: 00:00:1.89784718
+Training 10 classifiers out of 10
+Training weak classifiers...
+	- Num. weak classifiers: 11,376
+	- WC/s: 00:00:0.00930756
+	- Total time: 00:01:45.88286495
+Selecting best weak classifiers...
+	- Num. weak classifiers: 11,376
+	- WC/s: 00:00:0.00015508
+	- Total time: 00:00:1.76422715
+<== Training
+	- Num. classifiers: 10
+	- FA/s: 00:14:43.62423551
+	- Total time: 02:27:16.24236608
+[CascadeClassifier] Training 4 of out 4 layers
+Training...
+Training 1 classifiers out of 50
+Training weak classifiers...
+	- Num. weak classifiers: 11,376
+	- WC/s: 00:00:0.00992935
+	- Total time: 00:01:52.95630693
+Selecting best weak classifiers...
+	- Num. weak classifiers: 11,376
+	- WC/s: 00:00:0.00015566
+	- Total time: 00:00:1.77085018
+Training 2 classifiers out of 50
+Training weak classifiers...
+	- Num. weak classifiers: 11,376
+	- WC/s: 00:00:0.00873906
+	- Total time: 00:01:39.41554785
+Selecting best weak classifiers...
+	- Num. weak classifiers: 11,376
+	- WC/s: 00:00:0.00014287
+	- Total time: 00:00:1.62535715
+Training 3 classifiers out of 50
+Training weak classifiers...
+	- Num. weak classifiers: 11,376
+	- WC/s: 00:00:0.00886366
+	- Total time: 00:01:40.83307004
+Selecting best weak classifiers...
+	- Num. weak classifiers: 11,376
+	- WC/s: 00:00:0.00014507
+	- Total time: 00:00:1.65027714
+Training 4 classifiers out of 50
+Training weak classifiers...
+	- Num. weak classifiers: 11,376
+	- WC/s: 00:00:0.00984978
+	- Total time: 00:01:52.05115700
+Selecting best weak classifiers...
+	- Num. weak classifiers: 11,376
+	- WC/s: 00:00:0.00014889
+	- Total time: 00:00:1.69380689
+Training 5 classifiers out of 50
+Training weak classifiers...
+	- Num. weak classifiers: 11,376
+	- WC/s: 00:00:0.00965782
+	- Total time: 00:01:49.86735892
+Selecting best weak classifiers...
+	- Num. weak classifiers: 11,376
+	- WC/s: 00:00:0.00019429
+	- Total time: 00:00:2.21028590
+Training 6 classifiers out of 50
+Training weak classifiers...
+	- Num. weak classifiers: 11,376
+	- WC/s: 00:00:0.00935692
+	- Total time: 00:01:46.44435024
+Selecting best weak classifiers...
+	- Num. weak classifiers: 11,376
+	- WC/s: 00:00:0.00014962
+	- Total time: 00:00:1.70206285
+Training 7 classifiers out of 50
+Training weak classifiers...
+	- Num. weak classifiers: 11,376
+	- WC/s: 00:00:0.00955775
+	- Total time: 00:01:48.72899294
+Selecting best weak classifiers...
+	- Num. weak classifiers: 11,376
+	- WC/s: 00:00:0.00014962
+	- Total time: 00:00:1.70210004
+Training 8 classifiers out of 50
+Training weak classifiers...
+	- Num. weak classifiers: 11,376
+	- WC/s: 00:00:0.00972730
+	- Total time: 00:01:50.65780401
+Selecting best weak classifiers...
+	- Num. weak classifiers: 11,376
+	- WC/s: 00:00:0.00016196
+	- Total time: 00:00:1.84249091
+Training 9 classifiers out of 50
+Training weak classifiers...
+	- Num. weak classifiers: 11,376
+	- WC/s: 00:00:0.00951573
+	- Total time: 00:01:48.25097990
+Selecting best weak classifiers...
+	- Num. weak classifiers: 11,376
+	- WC/s: 00:00:0.00015417
+	- Total time: 00:00:1.75379896
+Training 10 classifiers out of 50
+Training weak classifiers...
+	- Num. weak classifiers: 11,376
+	- WC/s: 00:00:0.00961457
+	- Total time: 00:01:49.37532997
+Selecting best weak classifiers...
+	- Num. weak classifiers: 11,376
+	- WC/s: 00:00:0.00015021
+	- Total time: 00:00:1.70881510
+Training 11 classifiers out of 50
+Training weak classifiers...
+	- Num. weak classifiers: 11,376
+	- WC/s: 00:00:0.00978604
+	- Total time: 00:01:51.32599306
+Selecting best weak classifiers...
+	- Num. weak classifiers: 11,376
+	- WC/s: 00:00:0.00015901
+	- Total time: 00:00:1.80895114
+Training 12 classifiers out of 50
+Training weak classifiers...
+	- Num. weak classifiers: 11,376
+	- WC/s: 00:00:0.00971480
+	- Total time: 00:01:50.51559615
+Selecting best weak classifiers...
+	- Num. weak classifiers: 11,376
+	- WC/s: 00:00:0.00015205
+	- Total time: 00:00:1.72979021
+Training 13 classifiers out of 50
+Training weak classifiers...
+	- Num. weak classifiers: 11,376
+	- WC/s: 00:00:0.01009156
+	- Total time: 00:01:54.80162907
+Selecting best weak classifiers...
+	- Num. weak classifiers: 11,376
+	- WC/s: 00:00:0.00018383
+	- Total time: 00:00:2.09131002
+Training 14 classifiers out of 50
+Training weak classifiers...
+	- Num. weak classifiers: 11,376
+	- WC/s: 00:00:0.00990252
+	- Total time: 00:01:52.65114212
+Selecting best weak classifiers...
+	- Num. weak classifiers: 11,376
+	- WC/s: 00:00:0.00016476
+	- Total time: 00:00:1.87426996
+Training 15 classifiers out of 50
+Training weak classifiers...
+	- Num. weak classifiers: 11,376
+	- WC/s: 00:00:0.00957796
+	- Total time: 00:01:48.95894194
+Selecting best weak classifiers...
+	- Num. weak classifiers: 11,376
+	- WC/s: 00:00:0.00014975
+	- Total time: 00:00:1.70353913
+Training 16 classifiers out of 50
+Training weak classifiers...
+	- Num. weak classifiers: 11,376
+	- WC/s: 00:00:0.00960592
+	- Total time: 00:01:49.27695942
+Selecting best weak classifiers...
+	- Num. weak classifiers: 11,376
+	- WC/s: 00:00:0.00014454
+	- Total time: 00:00:1.64424992
+Training 17 classifiers out of 50
+Training weak classifiers...
+	- Num. weak classifiers: 11,376
+	- WC/s: 00:00:0.00906926
+	- Total time: 00:01:43.17197800
+Selecting best weak classifiers...
+	- Num. weak classifiers: 11,376
+	- WC/s: 00:00:0.00015267
+	- Total time: 00:00:1.73675799
+Training 18 classifiers out of 50
+Training weak classifiers...
+	- Num. weak classifiers: 11,376
+	- WC/s: 00:00:0.00991463
+	- Total time: 00:01:52.78889084
+Selecting best weak classifiers...
+	- Num. weak classifiers: 11,376
+	- WC/s: 00:00:0.00015240
+	- Total time: 00:00:1.73371482
+Training 19 classifiers out of 50
+Training weak classifiers...
+	- Num. weak classifiers: 11,376
+	- WC/s: 00:00:0.00987551
+	- Total time: 00:01:52.34378195
+Selecting best weak classifiers...
+	- Num. weak classifiers: 11,376
+	- WC/s: 00:00:0.00015003
+	- Total time: 00:00:1.70678496
+Training 20 classifiers out of 50
+Training weak classifiers...
+	- Num. weak classifiers: 11,376
+	- WC/s: 00:00:0.00991635
+	- Total time: 00:01:52.80836487
+Selecting best weak classifiers...
+	- Num. weak classifiers: 11,376
+	- WC/s: 00:00:0.00015866
+	- Total time: 00:00:1.80491209
+Training 21 classifiers out of 50
+Training weak classifiers...
+	- Num. weak classifiers: 11,376
+	- WC/s: 00:00:0.00936214
+	- Total time: 00:01:46.50372005
+Selecting best weak classifiers...
+	- Num. weak classifiers: 11,376
+	- WC/s: 00:00:0.00014942
+	- Total time: 00:00:1.69978404
+Training 22 classifiers out of 50
+Training weak classifiers...
+	- Num. weak classifiers: 11,376
+	- WC/s: 00:00:0.00944971
+	- Total time: 00:01:47.49993491
+Selecting best weak classifiers...
+	- Num. weak classifiers: 11,376
+	- WC/s: 00:00:0.00015064
+	- Total time: 00:00:1.71375108
+Training 23 classifiers out of 50
+Training weak classifiers...
+	- Num. weak classifiers: 11,376
+	- WC/s: 00:00:0.00970154
+	- Total time: 00:01:50.36476231
+Selecting best weak classifiers...
+	- Num. weak classifiers: 11,376
+	- WC/s: 00:00:0.00015836
+	- Total time: 00:00:1.80153799
+Training 24 classifiers out of 50
+Training weak classifiers...
+	- Num. weak classifiers: 11,376
+	- WC/s: 00:00:0.00975340
+	- Total time: 00:01:50.95473099
+Selecting best weak classifiers...
+	- Num. weak classifiers: 11,376
+	- WC/s: 00:00:0.00014810
+	- Total time: 00:00:1.68476009
+Training 25 classifiers out of 50
+Training weak classifiers...
+	- Num. weak classifiers: 11,376
+	- WC/s: 00:00:0.00970384
+	- Total time: 00:01:50.39091587
+Selecting best weak classifiers...
+	- Num. weak classifiers: 11,376
+	- WC/s: 00:00:0.00015960
+	- Total time: 00:00:1.81564331
+Training 26 classifiers out of 50
+Training weak classifiers...
+	- Num. weak classifiers: 11,376
+	- WC/s: 00:00:0.00954487
+	- Total time: 00:01:48.58245182
+Selecting best weak classifiers...
+	- Num. weak classifiers: 11,376
+	- WC/s: 00:00:0.00015813
+	- Total time: 00:00:1.79887104
+Training 27 classifiers out of 50
+Training weak classifiers...
+	- Num. weak classifiers: 11,376
+	- WC/s: 00:00:0.00906335
+	- Total time: 00:01:43.10466480
+Selecting best weak classifiers...
+	- Num. weak classifiers: 11,376
+	- WC/s: 00:00:0.00014623
+	- Total time: 00:00:1.66347313
+Training 28 classifiers out of 50
+Training weak classifiers...
+	- Num. weak classifiers: 11,376
+	- WC/s: 00:00:0.00885926
+	- Total time: 00:01:40.78294396
+Selecting best weak classifiers...
+	- Num. weak classifiers: 11,376
+	- WC/s: 00:00:0.00014151
+	- Total time: 00:00:1.60980201
+Training 29 classifiers out of 50
+Training weak classifiers...
+	- Num. weak classifiers: 11,376
+	- WC/s: 00:00:0.00870008
+	- Total time: 00:01:38.97211504
+Selecting best weak classifiers...
+	- Num. weak classifiers: 11,376
+	- WC/s: 00:00:0.00014133
+	- Total time: 00:00:1.60781407
+Training 30 classifiers out of 50
+Training weak classifiers...
+	- Num. weak classifiers: 11,376
+	- WC/s: 00:00:0.00883484
+	- Total time: 00:01:40.50510073
+Selecting best weak classifiers...
+	- Num. weak classifiers: 11,376
+	- WC/s: 00:00:0.00014896
+	- Total time: 00:00:1.69462562
+Training 31 classifiers out of 50
+Training weak classifiers...
+	- Num. weak classifiers: 11,376
+	- WC/s: 00:00:0.00854723
+	- Total time: 00:01:37.23328710
+Selecting best weak classifiers...
+	- Num. weak classifiers: 11,376
+	- WC/s: 00:00:0.00014316
+	- Total time: 00:00:1.62859297
+Training 32 classifiers out of 50
+Training weak classifiers...
+	- Num. weak classifiers: 11,376
+	- WC/s: 00:00:0.00878719
+	- Total time: 00:01:39.96303701
+Selecting best weak classifiers...
+	- Num. weak classifiers: 11,376
+	- WC/s: 00:00:0.00014131
+	- Total time: 00:00:1.60758328
+Training 33 classifiers out of 50
+Training weak classifiers...
+	- Num. weak classifiers: 11,376
+	- WC/s: 00:00:0.00895022
+	- Total time: 00:01:41.81770706
+Selecting best weak classifiers...
+	- Num. weak classifiers: 11,376
+	- WC/s: 00:00:0.00014035
+	- Total time: 00:00:1.59662795
+Training 34 classifiers out of 50
+Training weak classifiers...
+	- Num. weak classifiers: 11,376
+	- WC/s: 00:00:0.00837505
+	- Total time: 00:01:35.27460408
+Selecting best weak classifiers...
+	- Num. weak classifiers: 11,376
+	- WC/s: 00:00:0.00013952
+	- Total time: 00:00:1.58722305
+Training 35 classifiers out of 50
+Training weak classifiers...
+	- Num. weak classifiers: 11,376
+	- WC/s: 00:00:0.00850940
+	- Total time: 00:01:36.80295706
+Selecting best weak classifiers...
+	- Num. weak classifiers: 11,376
+	- WC/s: 00:00:0.00014075
+	- Total time: 00:00:1.60118914
+Training 36 classifiers out of 50
+Training weak classifiers...
+	- Num. weak classifiers: 11,376
+	- WC/s: 00:00:0.00857859
+	- Total time: 00:01:37.59003019
+Selecting best weak classifiers...
+	- Num. weak classifiers: 11,376
+	- WC/s: 00:00:0.00014187
+	- Total time: 00:00:1.61394787
+Training 37 classifiers out of 50
+Training weak classifiers...
+	- Num. weak classifiers: 11,376
+	- WC/s: 00:00:0.00857675
+	- Total time: 00:01:37.56918192
+Selecting best weak classifiers...
+	- Num. weak classifiers: 11,376
+	- WC/s: 00:00:0.00014400
+	- Total time: 00:00:1.63811612
+Training 38 classifiers out of 50
+Training weak classifiers...
+	- Num. weak classifiers: 11,376
+	- WC/s: 00:00:0.00941998
+	- Total time: 00:01:47.16176271
+Selecting best weak classifiers...
+	- Num. weak classifiers: 11,376
+	- WC/s: 00:00:0.00014578
+	- Total time: 00:00:1.65836883
+Training 39 classifiers out of 50
+Training weak classifiers...
+	- Num. weak classifiers: 11,376
+	- WC/s: 00:00:0.00846131
+	- Total time: 00:01:36.25593114
+Selecting best weak classifiers...
+	- Num. weak classifiers: 11,376
+	- WC/s: 00:00:0.00014158
+	- Total time: 00:00:1.61063075
+Training 40 classifiers out of 50
+Training weak classifiers...
+	- Num. weak classifiers: 11,376
+	- WC/s: 00:00:0.00840323
+	- Total time: 00:01:35.59520411
+Selecting best weak classifiers...
+	- Num. weak classifiers: 11,376
+	- WC/s: 00:00:0.00014283
+	- Total time: 00:00:1.62489414
+Training 41 classifiers out of 50
+Training weak classifiers...
+	- Num. weak classifiers: 11,376
+	- WC/s: 00:00:0.00836571
+	- Total time: 00:01:35.16835284
+Selecting best weak classifiers...
+	- Num. weak classifiers: 11,376
+	- WC/s: 00:00:0.00014121
+	- Total time: 00:00:1.60637593
+Training 42 classifiers out of 50
+Training weak classifiers...
+	- Num. weak classifiers: 11,376
+	- WC/s: 00:00:0.00840792
+	- Total time: 00:01:35.64850497
+Selecting best weak classifiers...
+	- Num. weak classifiers: 11,376
+	- WC/s: 00:00:0.00014171
+	- Total time: 00:00:1.61210108
+Training 43 classifiers out of 50
+Training weak classifiers...
+	- Num. weak classifiers: 11,376
+	- WC/s: 00:00:0.00839512
+	- Total time: 00:01:35.50288606
+Selecting best weak classifiers...
+	- Num. weak classifiers: 11,376
+	- WC/s: 00:00:0.00014229
+	- Total time: 00:00:1.61870313
+Training 44 classifiers out of 50
+Training weak classifiers...
+	- Num. weak classifiers: 11,376
+	- WC/s: 00:00:0.00836812
+	- Total time: 00:01:35.19578791
+Selecting best weak classifiers...
+	- Num. weak classifiers: 11,376
+	- WC/s: 00:00:0.00014253
+	- Total time: 00:00:1.62140298
+Training 45 classifiers out of 50
+Training weak classifiers...
+	- Num. weak classifiers: 11,376
+	- WC/s: 00:00:0.00836607
+	- Total time: 00:01:35.17237711
+Selecting best weak classifiers...
+	- Num. weak classifiers: 11,376
+	- WC/s: 00:00:0.00014251
+	- Total time: 00:00:1.62120295
+Training 46 classifiers out of 50
+Training weak classifiers...
+	- Num. weak classifiers: 11,376
+	- WC/s: 00:00:0.00838588
+	- Total time: 00:01:35.39783502
+Selecting best weak classifiers...
+	- Num. weak classifiers: 11,376
+	- WC/s: 00:00:0.00014189
+	- Total time: 00:00:1.61411238
+Training 47 classifiers out of 50
+Training weak classifiers...
+	- Num. weak classifiers: 11,376
+	- WC/s: 00:00:0.00842517
+	- Total time: 00:01:35.84479809
+Selecting best weak classifiers...
+	- Num. weak classifiers: 11,376
+	- WC/s: 00:00:0.00014142
+	- Total time: 00:00:1.60877705
+Training 48 classifiers out of 50
+Training weak classifiers...
+	- Num. weak classifiers: 11,376
+	- WC/s: 00:00:0.00839963
+	- Total time: 00:01:35.55416703
+Selecting best weak classifiers...
+	- Num. weak classifiers: 11,376
+	- WC/s: 00:00:0.00014215
+	- Total time: 00:00:1.61713004
+Training 49 classifiers out of 50
+Training weak classifiers...
+	- Num. weak classifiers: 11,376
+	- WC/s: 00:00:0.00834303
+	- Total time: 00:01:34.91036582
+Selecting best weak classifiers...
+	- Num. weak classifiers: 11,376
+	- WC/s: 00:00:0.00014173
+	- Total time: 00:00:1.61232996
+Training 50 classifiers out of 50
+Training weak classifiers...
+	- Num. weak classifiers: 11,376
+	- WC/s: 00:00:0.00856748
+	- Total time: 00:01:37.46362519
+Selecting best weak classifiers...
+	- Num. weak classifiers: 11,376
+	- WC/s: 00:00:0.00014926
+	- Total time: 00:00:1.69804692
+<== Training
+	- Num. classifiers: 50
+	- FA/s: 00:01:45.42000132
+	- Total time: 01:27:51.00007606
+Training finished!
+Saving weights...
+Weights saved!
+Loading Training set...
+Evaluating...
+Metrics: [Training set]
+	- true_positive: 526
+	- true_negative: 4,465
+	- false_positive: 83
+	- false_negative: 1,903
+	- accuracy: 0.715
+	- precision: 0.864
+	- recall: 0.217
+	- specifity: 0.982
+	- f1: 0.346
+Loading Test set...
+Evaluating...
+Metrics: [Test set]
+	- true_positive: 30
+	- true_negative: 22,768
+	- false_positive: 805
+	- false_negative: 442
+	- accuracy: 0.948
+	- precision: 0.036
+	- recall: 0.064
+	- specifity: 0.966
+	- f1: 0.046
+Finished!
+Total time (Training+test): 04:22:52.70583391

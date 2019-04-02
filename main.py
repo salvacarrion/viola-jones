@@ -47,7 +47,7 @@ def data_augmentation(X, y):
 
 def train(dataset_path):
     # Load precomputed dataset
-    test_size = 100
+    test_size = "all_fda"
     features_path = r"./weights/{}/".format(test_size)
     try:
         X = np.load(features_path + "x" + ".npy")
@@ -82,7 +82,7 @@ def train(dataset_path):
     # TRAINING ******************************************************************
     # Train
     print("\nTraining Viola-Jones...")
-    clf = ViolaJones(layers=[1, 5], features_path=features_path)
+    clf = ViolaJones(layers=[1, 5, 10, 50], features_path=features_path)
     clf.train(X, y)  # X_f (optional, to speed-up training)
     print("Training finished!")
 
@@ -94,17 +94,16 @@ def train(dataset_path):
     return clf
 
 
-def test(clf, dataset_path):
+def test(clf, dataset_path, dataset_faces, dataset_nofaces, name=""):
     # Load test set
-    print("\nLoading test set...")
-    #X, y = load_dataset(dataset_path, training_set_faces, training_set_nofaces)
-    X, y = load_dataset(dataset_path, test_set_faces, test_set_nofaces)
+    print("\nLoading {}...".format(name))
+    X, y = load_dataset(dataset_path, dataset_faces, dataset_nofaces)
 
     # Evaluate
     print("\nEvaluating...")
     metrics = evaluate(clf, X, y, show_samples=False)
 
-    print("Metrics:")
+    print("Metrics: [{}]".format(name))
     counter = 0
     for k, v in metrics.items():
         counter += 1
@@ -124,19 +123,20 @@ def train_and_test():
     #clf = ViolaJones.load("weights/all_da/cvj_weights_1554151172.pkl")
     clf = train(dataset_path)
 
-    # Test
-    test(clf, dataset_path)
+    # Test training
+    test(clf, dataset_path, training_set_faces, training_set_nofaces, name="Training set")
+    test(clf, dataset_path, test_set_faces, test_set_nofaces, name="Test set")
 
     print("\nFinished!")
 
 
 def find_faces():
-    weight_path = r"weights/1000/cvj_weights_1554133497.pkl"
+    weight_path = r"weights/1000/cvj_weights_1554165083.pkl"
     face_path = r"./datasets/judybats.jpg"
     #face_path = r"./datasets/i1.jpg"
-    face_path = r"./datasets/people.png"
-    face_path = r"./datasets/clase.png"
-    face_path = r"./datasets/physics.jpg"
+    #face_path = r"./datasets/people.png"
+    #face_path = r"./datasets/clase.png"
+    #face_path = r"./datasets/physics.jpg"
 
 
     # Load classifier weights
@@ -149,10 +149,11 @@ def find_faces():
     # Draw bouding boxes
     # TODO: Review Non-maximum supression (fix own implementation)
     # regions = np.array([(10, 10, 50, 50), (20, 20, 60, 60), (37, 59, 199, 244), (47, 69, 209, 254)])
-    regions = np.array(regions)
     scores = [1.0]*len(regions)  #np.ones(len(regions))
     indicies = nms.boxes(regions, scores)
-    drawn_img = draw_bounding_boxes(pil_img, list(regions[indicies]), thickness=2)
+    regions = np.array(regions)
+    drawn_img = draw_bounding_boxes(pil_img, list(regions[indicies]), thickness=1)
+    # drawn_img = draw_bounding_boxes(pil_img, list(regions), thickness=1)
 
     # Show image
     plt.imshow(drawn_img)
