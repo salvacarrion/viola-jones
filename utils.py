@@ -363,3 +363,17 @@ def normalize_image(image):
     norm_img = (image-mean)/stdev
     return norm_img
 
+
+def draw_haar_feature(np_img, haar_feature):
+    pil_img = Image.fromarray(np_img).convert("RGBA")
+
+    draw = ImageDraw.Draw(pil_img)
+    for rect in haar_feature.positive_regions:
+        x1, y1, x2, y2 = rect.x, rect.y, rect.x + rect.width - 1, rect.y + rect.height - 1
+        draw.rectangle([x1, y1, x2, y2], fill=(255, 255, 255, 255))
+
+    for rect in haar_feature.negative_regions:
+        x1, y1, x2, y2 = rect.x, rect.y, rect.x + rect.width - 1, rect.y + rect.height - 1
+        draw.rectangle([x1, y1, x2, y2], fill=(0, 0, 0, 255))
+
+    return pil_img

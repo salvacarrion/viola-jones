@@ -6,6 +6,8 @@ Viola-Jones Algorithm
 import random
 
 import matplotlib.pyplot as plt
+import matplotlib.animation as animation
+
 from nms import nms
 
 from utils import *
@@ -47,7 +49,7 @@ def data_augmentation(X, y):
 
 def train(dataset_path):
     # Load precomputed dataset
-    test_size = "all_fda"
+    test_size = 100  #"all_fda"
     features_path = r"./weights/{}/".format(test_size)
     try:
         X = np.load(features_path + "x" + ".npy")
@@ -61,7 +63,7 @@ def train(dataset_path):
         X, y = load_dataset(dataset_path, training_set_faces, training_set_nofaces)
 
         # Data augmentation
-        X, y = data_augmentation(X, y)
+        #X, y = data_augmentation(X, y)
 
         # Shuffle data (Not needed with the CascadeClassifier)
         X, y = unison_shuffled_copies(X, y)
@@ -82,7 +84,7 @@ def train(dataset_path):
     # TRAINING ******************************************************************
     # Train
     print("\nTraining Viola-Jones...")
-    clf = ViolaJones(layers=[1, 5, 10, 50], features_path=features_path)
+    clf = ViolaJones(layers=[1, 10, 50, 100], features_path=features_path)
     clf.train(X, y)  # X_f (optional, to speed-up training)
     print("Training finished!")
 
@@ -131,12 +133,12 @@ def train_and_test():
 
 
 def find_faces():
-    weight_path = r"weights/1000/cvj_weights_1554165083.pkl"
-    face_path = r"./datasets/judybats.jpg"
+    weight_path = r"weights/all_fda/cvj_weights_1554209625.pkl"
+    #face_path = r"./datasets/judybats.jpg"
     #face_path = r"./datasets/i1.jpg"
     #face_path = r"./datasets/people.png"
     #face_path = r"./datasets/clase.png"
-    #face_path = r"./datasets/physics.jpg"
+    face_path = r"./datasets/physics.jpg"
 
 
     # Load classifier weights
@@ -171,12 +173,51 @@ def find_faces():
     # plt.show()
 
 
+def draw_features():
+    test_name = 100
+    MAX_FACES = 1
+    video_folder = "videos"
+    frames = []
+    fig = plt.figure()
+
+    # Load data
+    X = np.load("weights/{}/x".format(test_name) + ".npy")
+    y = np.load("weights/{}/y".format(test_name) + ".npy")
+
+    X_faces = X[np.where(y == 1)]
+
+    # Load model
+    clf = ViolaJones.load("weights/all_fda/cvj_weights_1554209625.pkl")
+
+    for i, np_img in enumerate(X_faces):
+
+        if i < MAX_FACES:
+            # For each Adaboost in the Cascade
+            for ab in clf.clfs:
+
+                # For each Weak learner
+                for wc in ab.clfs:
+                    print("New frame: {}".format(len(frames)))
+
+                    drawn_img = draw_haar_feature(np_img,  wc.haar_feature)
+                    img = plt.imshow(drawn_img, cmap="gray")
+                    frames.append([img])
+                    #plt.savefig(video_folder + "/file_%d.png" % i)
+                    #plt.show()
+
+    ani = animation.ArtistAnimation(fig, frames, interval=100, blit=True,
+                                    repeat_delay=1000)
+    ani.save(video_folder + "/{}/video_{}".format(test_name, test_name) + '.mp4', writer='ffmpeg')
+    plt.show()
+
+
 if __name__ == "__main__":
     start_time = time.time()
     print("Starting scripting...")
 
-    train_and_test()
+    #train_and_test()
     #find_faces()
+    draw_features()
 
     # Elapsed time
     print("\n" + get_pretty_time(start_time, s="Total time (Training+test): "))
