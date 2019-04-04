@@ -42,4 +42,4 @@ class HaarFeature:
 
         sum_pos = sum([rect.compute_region(ii, scale) for rect in self.positive_regions])
         sum_neg = sum([rect.compute_region(ii, scale) for rect in self.negative_regions])
-        return sum_pos - sum_neg
+        return sum_neg - sum_pos
