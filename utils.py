@@ -77,7 +77,7 @@ def build_features(img_w, img_h, shift=1, scale_factor=1.25, min_w=4, min_h=4):
                     right = RectangleRegion(x + w_width, y, w_width, w_height)  # | |X|
                     right_2 = RectangleRegion(x + w_width * 2, y, w_width, w_height)  # | | |X|
                     bottom = RectangleRegion(x, y + w_height, w_width, w_height)  # | |/|X|
-                    # bottom_2 = RectangleRegion(x, y + w_height * 2, w_width, w_height)  # | |/| |/|X|
+                    #bottom_2 = RectangleRegion(x, y + w_height * 2, w_width, w_height)  # | |/| |/|X|
                     bottom_right = RectangleRegion(x + w_width, y + w_height, w_width, w_height)  # | |/| |X|
 
                     # [Haar] 2 rectagles *********
@@ -93,7 +93,7 @@ def build_features(img_w, img_h, shift=1, scale_factor=1.25, min_w=4, min_h=4):
                     if x + w_width * 3 < img_w:
                         features.append(HaarFeature([immediate, right_2], [right]))
                     # # Vertical (w-b-w)
-                    # if y + w_height * 2 < img_h:
+                    # if y + w_height * 3 < img_h:
                     #     features.append(HaarFeature([immediate, bottom_2], [bottom]))
 
                     # [Haar] 4 rectagles *********
