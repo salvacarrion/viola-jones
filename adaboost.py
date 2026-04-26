@@ -10,6 +10,11 @@ class AdaBoost:
         self.n_estimators = n_estimators
         self.alphas = []
         self.clfs = []
+        # Acceptance threshold as a fraction of sum(alphas) in [0, 1].
+        # 0.5 = plain weighted majority vote (default AdaBoost). After training,
+        # `calibrate()` lowers this so the layer keeps ~all training faces — see
+        # §4.2 of Viola & Jones (2001).
+        self.threshold = 0.5
 
     def train(self, X, y, features, X_ii):
         pos_num = np.sum(y)
@@ -117,7 +122,9 @@ class AdaBoost:
             # If real==predicted => real - predicted == 0
             # X[0] => List of feature values of the feature F_i of the all imagenes: [2, -6, 4, -7]
             incorrectness = np.abs(clf.classify_f(X[i]) - y)
-            error = float(np.sum(np.multiply(incorrectness, weights))) / len(incorrectness)  # Mean error
+            # Weighted error: weights are already normalized to sum to 1 in AdaBoost.train,
+            # so the AdaBoost epsilon is the dot product, NOT the mean.
+            error = float(np.sum(np.multiply(incorrectness, weights)))
 
             if error < min_error:
                 best_clf, min_error, best_accuracy = clf, error, incorrectness
@@ -143,11 +150,46 @@ class AdaBoost:
                 correctness = abs(clf.classify(xii_i) - yi)
                 accuracy.append(correctness)
                 error += w * correctness
-            error = error / len(X_ii)
             if error < best_error:
                 best_clf, best_error, best_accuracy = clf, error, accuracy
         return best_clf, best_error, np.array(best_accuracy)
 
-    def classify(self, X, scale=1.0):
-        total = sum(list(map(lambda x: x[0] * x[1].classify(X, scale), zip(self.alphas, self.clfs))))  # Weak classifiers
-        return 1 if total >= 0.5 * sum(self.alphas) else 0
+    def score(self, X, scale=1.0, std=1.0):
+        """Weighted vote in [0, 1]; higher means more face-like."""
+        denom = sum(self.alphas)
+        if denom <= 0:
+            return 0.0
+        total = sum(a * c.classify(X, scale=scale, std=std) for a, c in zip(self.alphas, self.clfs))
+        return float(total) / float(denom)
+
+    def classify(self, X, scale=1.0, std=1.0):
+        return 1 if self.score(X, scale=scale, std=std) >= self.threshold else 0
+
+    def calibrate(self, X_pos_ii, X_pos_std=None, target_recall=0.99):
+        """
+        Lower `self.threshold` so the layer accepts at least `target_recall`
+        of the positive (face) integral images in `X_pos_ii`.
+
+        Per-stage calibration from §4.2 of Viola-Jones: each layer commits to
+        keeping ~all faces and contributes only rejection power against
+        non-faces. Without it, deep cascades collapse face recall.
+
+        `X_pos_std` is the per-sample pixel std used by the inference-time
+        variance normalization. Pass the same stds you'll see at inference so
+        the calibrated threshold matches deployment behavior.
+        """
+        if not self.clfs or len(X_pos_ii) == 0:
+            return
+        if X_pos_std is None:
+            X_pos_std = np.ones(len(X_pos_ii), dtype=np.float64)
+        scores = np.array(
+            [self.score(ii, std=float(s)) for ii, s in zip(X_pos_ii, X_pos_std)],
+            dtype=np.float64,
+        )
+        sorted_desc = np.sort(scores)[::-1]
+        # We want fraction(scores >= threshold) >= target_recall, so we set the
+        # threshold to the score at the ceil(target_recall * n)-th-largest position.
+        k = max(1, int(np.ceil(target_recall * len(sorted_desc))))
+        # Don't go above the default 0.5 — calibration is allowed to *loosen* the
+        # layer, never to tighten it past the un-calibrated AdaBoost rule.
+        self.threshold = float(min(0.5, sorted_desc[k - 1]))

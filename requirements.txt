@@ -1,4 +1,6 @@
-progress
 numpy
-pip==10.0.1
-setuptools==39.0.1
+scipy
+Pillow
+matplotlib
+scikit-learn
+progress

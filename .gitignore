@@ -15,4 +15,5 @@
 
 # Others
 venv/
-weights/
+*.log
+*.npy

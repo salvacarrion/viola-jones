@@ -8,12 +8,18 @@ class WeakClassifier:
         self.threshold = threshold
         self.polarity = polarity
 
-    def classify(self, ii, scale=1.0):
+    def classify(self, ii, scale=1.0, std=1.0):
         """
-        Classifies an image given its (integral) image "x"
+        Classifies an image given its (integral) image "x".
+
+        `std` implements per-window variance normalization (Viola-Jones §5.1).
+        Training feature values were divided by each sample's pixel std, so the
+        learned threshold is in "std-normalized" units. At inference we
+        multiply the threshold back by the window's std (rather than dividing
+        every pixel up front, which would invalidate the integral image).
         """
         feature_value = self.haar_feature.compute_value(ii, scale)
-        return 1 if self.polarity * feature_value < self.polarity * self.threshold * (scale**2) else 0
+        return 1 if self.polarity * feature_value < self.polarity * self.threshold * (scale**2) * std else 0
 
     def classify_f(self, feature_value):
         """
@@ -38,15 +44,18 @@ class WeakClassifier:
 
         min_error, best_feature, best_threshold, best_polarity = float('inf'), None, None, None
         for w, f, label in sorted_features:
-            # MIN( (w*No-faces + w*Remaining_faces), (w*Faces + w*Remaining_No-faces) )
-            error = min(sum_neg_weights + (total_pos_weights - sum_pos_weights),
-                        sum_pos_weights + (total_neg_weights - sum_neg_weights))
+            # err_pos: error if polarity=+1 (face = below threshold) -> negatives below + positives above are wrong
+            # err_neg: error if polarity=-1 (face = above threshold) -> positives below + negatives above are wrong
+            err_pos = sum_neg_weights + (total_pos_weights - sum_pos_weights)
+            err_neg = sum_pos_weights + (total_neg_weights - sum_neg_weights)
+            error = min(err_pos, err_neg)
 
-            # Save best values
+            # Save best values. Polarity must come from which branch won the min,
+            # using the (weighted) errors — not raw pos/neg counts, which assume balanced classes.
             if error < min_error:
                 min_error = error
                 self.threshold = f  # Best feature value
-                self.polarity = 1 if pos_seen > neg_seen else -1
+                self.polarity = 1 if err_pos < err_neg else -1
 
             # Keep counts
             if label == 1:

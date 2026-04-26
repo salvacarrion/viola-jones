@@ -1,8 +1,8 @@
+import os
 import time
 import glob
 import numpy as np
 from PIL import Image, ImageDraw
-from scipy.misc import toimage
 import matplotlib.pyplot as plt
 
 from features import RectangleRegion, HaarFeature
@@ -11,7 +11,11 @@ import multiprocessing
 
 
 def imshow(img):
-    toimage(img).show()
+    # scipy.misc.toimage was removed in scipy>=1.3; use PIL directly.
+    arr = np.asarray(img)
+    if arr.dtype != np.uint8:
+        arr = np.clip(arr, 0, 255).astype(np.uint8)
+    Image.fromarray(arr).show()
 
 
 def load_image(image_path, as_numpy=False):
@@ -29,22 +33,11 @@ def rgb2gray(img):
 
 def integral_image(img):
     """
-    Optimized version of Summed-area table
-    ii(-1, y) = 0
-    s(x, -1) = 0
-    s(x, y) = s(x, y-1) + i(x, y)  # Sum of column X at level Y
-    ii(x, y) = ii(x-1, y) + s(x, y)  # II at (X-1,Y) + Column X at Y
+    Summed-area table: ii[r, c] = sum of img[:r+1, :c+1].
+    Equivalent to two cumulative sums; orders of magnitude faster than the
+    naive double-loop, especially when called per sliding window.
     """
-    h, w = img.shape
-
-    s = np.zeros(img.shape, dtype=np.uint32)
-    ii = np.zeros(img.shape, dtype=np.uint32)
-
-    for x in range(0, w):
-        for y in range(0, h):
-            s[y][x] = s[y - 1][x] + img[y][x] if y - 1 >= 0 else img[y][x]
-            ii[y][x] = ii[y][x - 1] + s[y][x] if x - 1 >= 0 else s[y][x]
-    return ii
+    return np.asarray(img, dtype=np.uint32).cumsum(axis=0).cumsum(axis=1)
 
 
 def integral_image_pow2(img):
@@ -68,9 +61,9 @@ def build_features(img_w, img_h, shift=1, scale_factor=1.25, min_w=4, min_h=4):
 
             # Walk through all the image
             x = 0
-            while x + w_width < img_w:
+            while x + w_width <= img_w:
                 y = 0
-                while y + w_height < img_h:
+                while y + w_height <= img_h:
 
                     # Possible Haar regions
                     immediate = RectangleRegion(x, y, w_width, w_height)  # |X|
@@ -82,22 +75,22 @@ def build_features(img_w, img_h, shift=1, scale_factor=1.25, min_w=4, min_h=4):
 
                     # [Haar] 2 rectagles *********
                     # Horizontal (w-b)
-                    if x + w_width * 2 < img_w:
+                    if x + w_width * 2 <= img_w:
                         features.append(HaarFeature([immediate], [right]))
                     # Vertical (w-b)
-                    if y + w_height * 2 < img_h:
+                    if y + w_height * 2 <= img_h:
                         features.append(HaarFeature([bottom], [immediate]))
 
                     # [Haar] 3 rectagles *********
                     # Horizontal (w-b-w)
-                    if x + w_width * 3 < img_w:
+                    if x + w_width * 3 <= img_w:
                         features.append(HaarFeature([immediate, right_2], [right]))
                     # # Vertical (w-b-w)
-                    # if y + w_height * 3 < img_h:
+                    # if y + w_height * 3 <= img_h:
                     #     features.append(HaarFeature([immediate, bottom_2], [bottom]))
 
                     # [Haar] 4 rectagles *********
-                    if x + w_width * 2 < img_w and y + w_height * 2 < img_h:
+                    if x + w_width * 2 <= img_w and y + w_height * 2 <= img_h:
                         features.append(HaarFeature([immediate, bottom_right], [bottom, right]))
 
                     y += shift
@@ -208,6 +201,130 @@ def load_dataset(basepath, pos_filename, neg_filename):
     y[:len(pos_samples)] = 1
 
     return X, y
+
+
+def load_cbcl_dataset(basepath, split):
+    """
+    Load the MIT CBCL Face Database #1 split as (X, y).
+
+    Accepts either layout, transparently:
+      - Pre-bundled .npy files at the root:
+          cbcl_<split>_faces_19x19g.npy
+          cbcl_<split>_nofaces_19x19g.npy
+      - Original PGM directory layout:
+          <split>/face/*.pgm
+          <split>/non-face/*.pgm
+        In that case the .npy bundles are written to disk on first read so
+        subsequent loads are fast.
+    """
+    assert split in ("train", "test"), "split must be 'train' or 'test'"
+
+    pos_npy = os.path.join(basepath, "cbcl_{}_faces_19x19g.npy".format(split))
+    neg_npy = os.path.join(basepath, "cbcl_{}_nofaces_19x19g.npy".format(split))
+
+    if not (os.path.exists(pos_npy) and os.path.exists(neg_npy)):
+        pos_dir = os.path.join(basepath, split, "face")
+        neg_dir = os.path.join(basepath, split, "non-face")
+        if not (os.path.isdir(pos_dir) and os.path.isdir(neg_dir)):
+            raise FileNotFoundError(
+                "Could not find CBCL data at {}. Expected either the .npy "
+                "bundles ({}, {}) or the PGM directories ({}, {}).".format(
+                    basepath, pos_npy, neg_npy, pos_dir, neg_dir))
+        print("Bundling PGMs -> {}".format(pos_npy))
+        np.save(pos_npy, load_images_from_dir(pos_dir, "*.pgm"))
+        print("Bundling PGMs -> {}".format(neg_npy))
+        np.save(neg_npy, load_images_from_dir(neg_dir, "*.pgm"))
+
+    pos_samples = np.load(pos_npy)
+    neg_samples = np.load(neg_npy)
+    X = np.concatenate([pos_samples, neg_samples], axis=0)
+    y = np.zeros(len(pos_samples) + len(neg_samples))
+    y[:len(pos_samples)] = 1
+    return X, y
+
+
+def build_bootstrap_negatives(
+    caltech_root,
+    output_path,
+    patches_per_image=20,
+    patch_size=(19, 19),
+    exclude_categories=("faces", "people"),
+    min_image_side=19,
+    seed=42,
+):
+    """
+    Sample face-free 19x19 patches from Caltech-256 for hard-negative mining.
+
+    Walks `<caltech_root>/<NNN>.<category>/`, skips any folder whose name contains
+    one of `exclude_categories` (case-insensitive), and from each remaining image
+    samples `patches_per_image` random crops at random scales (bigger crops are
+    resized down to `patch_size`). The scale jitter matches the sliding-window
+    detector, so the pool covers the same window sizes the cascade will see at
+    inference.
+
+    Args:
+        caltech_root: path to the unzipped 256_ObjectCategories directory.
+        output_path: where to save the resulting .npy bundle (shape (N, h, w)).
+        patches_per_image: random crops drawn per source image.
+        patch_size: final (h, w) of each patch -- 19x19 to match CBCL.
+        exclude_categories: substrings; folders matching any are skipped.
+        min_image_side: skip source images smaller than this on either axis.
+        seed: RNG seed for reproducibility.
+
+    Returns:
+        np.ndarray of shape (N, *patch_size), dtype uint8.
+    """
+    rng = np.random.default_rng(seed)
+    cat_dirs = sorted(
+        d for d in glob.glob(os.path.join(caltech_root, "*")) if os.path.isdir(d)
+    )
+
+    kept, skipped = [], []
+    for d in cat_dirs:
+        name = os.path.basename(d).lower()
+        if any(tag in name for tag in exclude_categories):
+            skipped.append(os.path.basename(d))
+        else:
+            kept.append(d)
+    print("Excluded {} categories: {}".format(len(skipped), skipped))
+    print("Kept {} categories.".format(len(kept)))
+
+    ph, pw = patch_size
+    patches = []
+    bar = Bar('Sampling patches', max=len(kept),
+              suffix='%(percent)d%% - %(elapsed_td)s - %(eta_td)s')
+    for cat_dir in bar.iter(kept):
+        for img_path in glob.glob(os.path.join(cat_dir, "*.jpg")):
+            try:
+                arr = np.array(Image.open(img_path).convert('L'))
+            except (OSError, ValueError):
+                continue
+            h, w = arr.shape
+            if h < min_image_side or w < min_image_side:
+                continue
+            max_scale = max(1.0, min(h, w) / max(ph, pw))
+            for _ in range(patches_per_image):
+                scale = rng.uniform(1.0, max_scale)
+                ch = min(int(round(ph * scale)), h)
+                cw = min(int(round(pw * scale)), w)
+                y0 = int(rng.integers(0, h - ch + 1))
+                x0 = int(rng.integers(0, w - cw + 1))
+                crop = arr[y0:y0 + ch, x0:x0 + cw]
+                if (ch, cw) != (ph, pw):
+                    crop = np.array(
+                        Image.fromarray(crop).resize((pw, ph), Image.BILINEAR)
+                    )
+                patches.append(crop)
+    bar.finish()
+
+    patches = np.stack(patches, axis=0).astype(np.uint8)
+    print("Sampled {:,} patches.".format(len(patches)))
+    out_dir = os.path.dirname(os.path.abspath(output_path))
+    if out_dir:
+        os.makedirs(out_dir, exist_ok=True)
+    np.save(output_path, patches)
+    print("Saved -> {}".format(output_path))
+    return patches
 
 
 def dir2file(folder, savefile):
