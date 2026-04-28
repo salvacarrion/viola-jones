@@ -1,7 +1,8 @@
 import math
-from utils import *
+import time
+import numpy as np
+from tqdm.auto import tqdm
 
-from progress.bar import Bar
 from weakclassifier import WeakClassifier
 
 
@@ -16,154 +17,155 @@ class AdaBoost:
         # §4.2 of Viola & Jones (2001).
         self.threshold = 0.5
 
-    def train(self, X, y, features, X_ii):
-        pos_num = np.sum(y)
-        neg_num = len(y)-pos_num
-        weights = np.zeros(len(y), dtype=np.float32)
+    def train(self, X, y, features, feature_chunk=2000):
+        """
+        Boost `n_estimators` decision-stump rounds.
 
-        # Initialize weights
-        for i in range(len(y)):
-            if y[i] == 1:  # Face
-                weights[i] = 1.0 / (pos_num * 2.0)
-            else:  # No face
-                weights[i] = 1.0 / (neg_num * 2.0)
+        Args:
+            X:          (n_features, n_samples) feature-value matrix (already
+                        variance-normalized by the caller).
+            y:          (n_samples,) labels in {0, 1}.
+            features:   list of HaarFeature, len == n_features. The chosen
+                        weak classifier's `haar_feature` is set from this list.
+            feature_chunk: features processed per vectorized batch — caps
+                        the per-batch matrices at ~`feature_chunk × n_samples
+                        × 4 bytes` floats. Tune down on memory pressure.
 
-        # Training
-        print("Training...")
+        The expensive step (per-feature optimal threshold + weighted error)
+        is fully vectorized: for each batch of features we sort row-wise,
+        run an exclusive prefix sum of weighted positives/negatives, and
+        pick the (threshold, polarity) that minimizes weighted error in a
+        single `np.argmin`. ~30-50× faster than the Python triple loop.
+        """
+        y = y.astype(np.float32, copy=False)
+        n_features, n_samples = X.shape
+        assert len(features) == n_features
+        assert y.shape == (n_samples,)
+
+        pos_num = float(np.sum(y))
+        neg_num = float(n_samples - pos_num)
+        if pos_num == 0 or neg_num == 0:
+            raise ValueError("AdaBoost.train requires both positive and negative samples.")
+
+        # Initial weights: balanced between classes (Viola-Jones §3, eq. 1).
+        weights = np.where(y == 1, 0.5 / pos_num, 0.5 / neg_num).astype(np.float32)
+
         start_time = time.time()
-        # bar = Bar('Training viola-jones...', max=self.T, suffix='%(percent)d%% - %(elapsed_td)s - %(eta_td)s')
-        # for t in bar.iter(range(self.T)):
-        for t in range(self.n_estimators):
-            print("Training %d classifiers out of %d" % (t+1, self.n_estimators))
-
-            # Normalize weights
-            w_sum = np.sum(weights)
+        pbar = tqdm(range(self.n_estimators), desc='Boosting rounds',
+                    unit='round', leave=True)
+        for t in pbar:
+            w_sum = float(weights.sum())
             if w_sum == 0.0:
-                print("[WARNING] EARLY STOP. WEIGHTS ARE ZERO.")
+                print("[AdaBoost] weights collapsed to zero at round {}".format(t))
                 break
-            weights = weights / w_sum  #np.linalg.norm(weights)
+            weights /= w_sum
 
-            # Train weak classifiers (one per feature)
-            print("Training weak classifiers...")
-            start_time2 = time.time()
-            weak_classifiers = self.train_estimators(X, y, weights, features)
-            print("\t- Num. weak classifiers: {:,}".format(len(weak_classifiers)))
-            print("\t- WC/s: " + get_pretty_time(start_time2, divisor=len(weak_classifiers)))
-            print("\t- Total time: " + get_pretty_time(start_time2))
+            best_j, thr, pol, err, preds = self._best_stump(
+                X, y, weights, feature_chunk=feature_chunk)
 
-            # Select classifier with the lowest error
-            start_time2 = time.time()
-            print("Selecting best weak classifiers...")
-            clf, error, incorrectness = self.select_best(weak_classifiers, X, y, weights)
-            #clf, error, incorrectness = self.select_best2(weak_classifiers, weights, X_ii, y,)
-            print("\t- Num. weak classifiers: {:,}".format(len(weak_classifiers)))
-            print("\t- WC/s: " + get_pretty_time(start_time2, divisor=len(weak_classifiers)))
-            print("\t- Total time: " + get_pretty_time(start_time2))
+            if err >= 0.5:
+                # Halting condition: no weak classifier beats random under
+                # the current weights → adding it gives alpha ≤ 0.
+                pbar.write("[AdaBoost] best weak error={:.4f} ≥ 0.5; stopping "
+                           "stage at round {}/{}".format(err, t, self.n_estimators))
+                break
 
-            if error <= 0.5:
-                # Compute alpha, beta
-                beta = error / (1.0 - error)
-                alpha = math.log(1.0 / (beta + 1e-18))  # Avoid division by zero
+            # Clip err away from {0, 1} for numerical stability:
+            #  - err == 0 (perfect on weighted train) gives beta=0; the
+            #    weight update `beta**1 = 0` collapses all surviving weights
+            #    to zero on the next round, so we cap alpha at the value
+            #    implied by 1e-10 rather than blowing up to ∞.
+            #  - tiny float drift can put err slightly negative, which would
+            #    make beta negative and `math.log` raise a domain error.
+            err_clipped = float(np.clip(err, 1e-10, 0.5 - 1e-10))
+            beta = err_clipped / (1.0 - err_clipped)
+            alpha = math.log(1.0 / beta)
+            incorrectness = np.abs(preds - y)         # 0 if correct, 1 if wrong
+            weights = weights * (beta ** (1.0 - incorrectness))
 
-                # Update weights
-                weights = np.multiply(weights, beta ** (1 - incorrectness))
+            clf = WeakClassifier(haar_feature=features[best_j],
+                                 threshold=float(thr), polarity=int(pol))
+            self.alphas.append(float(alpha))
+            self.clfs.append(clf)
+            pbar.set_postfix(err='{:.4f}'.format(err), alpha='{:.3f}'.format(alpha))
 
-                # Save parameters
-                self.alphas.append(alpha)
-                self.clfs.append(clf)
-            else:
-                print(error)
-                print("WHAT THE FUCK!????")
-        # bar.finish()
-        print("<== Training")
-        print("\t- Num. classifiers: {:,}".format(self.n_estimators))
-        print("\t- FA/s: " + get_pretty_time(start_time, divisor=self.n_estimators))
-        print("\t- Total time: " + get_pretty_time(start_time))
+        print("\t- AdaBoost stage: {} weak classifiers in {}".format(
+            len(self.clfs), _fmt_time(start_time)))
 
-    def train_estimators(self, X, y, weights, features):
+    def _best_stump(self, X, y, weights, feature_chunk):
         """
-        Find optimal threshold given current weights
+        Vectorized pass over all features. For each feature, find the
+        (threshold, polarity) minimizing weighted error; then pick the
+        single feature with lowest error.
+
+        Returns (best_j, threshold, polarity, error, predictions).
         """
-        # Precomputation and initializations
-        # This is faster than its numpy version
-        weak_clfs = []
-        total_pos_weights, total_neg_weights = 0, 0
-        for w, label in zip(weights, y):
-            if label == 1:
-                total_pos_weights += w
-            else:
-                total_neg_weights += w
+        n_features, n_samples = X.shape
 
-        bar = Bar('Training weak classifiers', max=len(X), suffix='%(percent)d%% - %(elapsed_td)s - %(eta_td)s')
-        for i in bar.iter(range(len(X))):
-        # for i in range(len(X)):
-        #     if (i+1) % 1000 == 0 and i != 0:
-        #         print("Training weak classifiers... ({}/{})".format(i + 1, len(X)))
+        total_pos_w = float((weights * y).sum())
+        total_neg_w = float(weights.sum() - total_pos_w)
 
-            # Train weak classifier
-            clf = WeakClassifier(haar_feature=features[i])  # Index of features
-            clf.train(X[i], y, weights, total_pos_weights, total_neg_weights)
-            weak_clfs.append(clf)
-        bar.finish()
+        # Per-sample weight contribution if positive / negative
+        pos_w = (weights * y).astype(np.float32)
+        neg_w = (weights - pos_w).astype(np.float32)
 
-        return weak_clfs
+        global_best_err = np.inf
+        global_best = (0, 0.0, 1)  # (j, threshold, polarity)
+        global_best_preds = None
 
-    def select_best(self, weak_clfs, X, y, weights):
-        best_clf, min_error, best_accuracy = None, float('inf'), None
+        for f0 in range(0, n_features, feature_chunk):
+            f1 = min(f0 + feature_chunk, n_features)
+            X_chunk = X[f0:f1]                                  # (cf, n_samples)
 
-        bar = Bar('Selecting best weak classifier', max=len(weak_clfs), suffix='%(percent)d%% - %(elapsed_td)s - %(eta_td)s')
-        i=-1
-        for clf in bar.iter(weak_clfs):
-            i+=1
-        # for i, clf in enumerate(weak_clfs):
-        #     if (i+1) % 1000 == 0 and i != 0:
-        #         print("Selecting weak classifiers... ({}/{})".format(i+1, len(weak_clfs)))
+            # Sort feature values per row
+            sort_idx = np.argsort(X_chunk, axis=1, kind='quicksort')
 
-            # If real==predicted => real - predicted == 0
-            # X[0] => List of feature values of the feature F_i of the all imagenes: [2, -6, 4, -7]
-            incorrectness = np.abs(clf.classify_f(X[i]) - y)
-            # Weighted error: weights are already normalized to sum to 1 in AdaBoost.train,
-            # so the AdaBoost epsilon is the dot product, NOT the mean.
-            error = float(np.sum(np.multiply(incorrectness, weights)))
+            # Take per-feature sorted weight contributions
+            sorted_pos_w = pos_w[sort_idx]                       # (cf, n_samples)
+            sorted_neg_w = neg_w[sort_idx]
+            # Exclusive prefix sums = cumsum minus current
+            cum_pos = np.cumsum(sorted_pos_w, axis=1) - sorted_pos_w
+            cum_neg = np.cumsum(sorted_neg_w, axis=1) - sorted_neg_w
 
-            if error < min_error:
-                best_clf, min_error, best_accuracy = clf, error, incorrectness
+            # err_pos: polarity=+1 (face = below threshold).
+            # err_neg: polarity=-1 (face = above threshold).
+            err_pos = cum_neg + (total_pos_w - cum_pos)
+            err_neg = cum_pos + (total_neg_w - cum_neg)
+            err = np.minimum(err_pos, err_neg)                   # (cf, n_samples)
 
-        bar.finish()
+            # Best threshold position per feature (in sorted order)
+            best_idx = np.argmin(err, axis=1)                    # (cf,)
+            rows = np.arange(f1 - f0)
+            chunk_best_err = err[rows, best_idx]                 # (cf,)
 
-        return best_clf, min_error, best_accuracy
+            # Single best feature in this chunk
+            local_j = int(np.argmin(chunk_best_err))
+            local_err = float(chunk_best_err[local_j])
+            if local_err < global_best_err:
+                global_best_err = local_err
+                # Threshold = feature value at the best sorted position
+                sorted_X = np.take_along_axis(X_chunk, sort_idx, axis=1)
+                thr = float(sorted_X[local_j, best_idx[local_j]])
+                pol = 1 if err_pos[local_j, best_idx[local_j]] < err_neg[local_j, best_idx[local_j]] else -1
+                global_best = (f0 + local_j, thr, pol)
+                # Predictions for the global best (so far): polarity * X < polarity * thr
+                fv = X[f0 + local_j]
+                global_best_preds = (pol * fv < pol * thr).astype(np.float32)
 
-    def select_best2(self, classifiers, weights, X_ii, y):
-        """
-        Selects the best weak classifier for the given weights
-          Args:
-            classifiers: An array of weak classifiers
-            weights: An array of weights corresponding to each training example
-            training_data: An array of tuples. The first element is the numpy array of shape (m, n) representing the integral image. The second element is its classification (1 or 0)
-          Returns:
-            A tuple containing the best classifier, its error, and an array of its accuracy
-        """
-        best_clf, best_error, best_accuracy = None, float('inf'), None
-        for clf in classifiers:
-            error, accuracy = 0, []
-            for xii_i, yi, w in zip(X_ii, y, weights):
-                correctness = abs(clf.classify(xii_i) - yi)
-                accuracy.append(correctness)
-                error += w * correctness
-            if error < best_error:
-                best_clf, best_error, best_accuracy = clf, error, accuracy
-        return best_clf, best_error, np.array(best_accuracy)
+        j, thr, pol = global_best
+        return j, thr, pol, global_best_err, global_best_preds
 
-    def score(self, X, scale=1.0, std=1.0):
+    def score(self, X, scale=1.0, std=1.0, ox=0, oy=0):
         """Weighted vote in [0, 1]; higher means more face-like."""
         denom = sum(self.alphas)
         if denom <= 0:
             return 0.0
-        total = sum(a * c.classify(X, scale=scale, std=std) for a, c in zip(self.alphas, self.clfs))
+        total = sum(a * c.classify(X, scale=scale, std=std, ox=ox, oy=oy)
+                    for a, c in zip(self.alphas, self.clfs))
         return float(total) / float(denom)
 
-    def classify(self, X, scale=1.0, std=1.0):
-        return 1 if self.score(X, scale=scale, std=std) >= self.threshold else 0
+    def classify(self, X, scale=1.0, std=1.0, ox=0, oy=0):
+        return 1 if self.score(X, scale=scale, std=std, ox=ox, oy=oy) >= self.threshold else 0
 
     def calibrate(self, X_pos_ii, X_pos_std=None, target_recall=0.99):
         """
@@ -187,9 +189,17 @@ class AdaBoost:
             dtype=np.float64,
         )
         sorted_desc = np.sort(scores)[::-1]
-        # We want fraction(scores >= threshold) >= target_recall, so we set the
-        # threshold to the score at the ceil(target_recall * n)-th-largest position.
+        # We want fraction(scores >= threshold) >= target_recall, so we set
+        # the threshold to the score at the ceil(target_recall * n)-th-
+        # largest position.
         k = max(1, int(np.ceil(target_recall * len(sorted_desc))))
-        # Don't go above the default 0.5 — calibration is allowed to *loosen* the
-        # layer, never to tighten it past the un-calibrated AdaBoost rule.
+        # Don't go above the default 0.5 — calibration is allowed to *loosen*
+        # the layer, never to tighten it past the un-calibrated AdaBoost rule.
         self.threshold = float(min(0.5, sorted_desc[k - 1]))
+
+
+def _fmt_time(start):
+    """Helper for short MM:SS.s prints."""
+    elapsed = time.time() - start
+    m, s = divmod(elapsed, 60)
+    return "{:02d}:{:05.2f}".format(int(m), s)

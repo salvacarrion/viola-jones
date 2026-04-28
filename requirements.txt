@@ -3,4 +3,6 @@ scipy
 Pillow
 matplotlib
 scikit-learn
-progress
+tqdm
+datasets
+huggingface_hub

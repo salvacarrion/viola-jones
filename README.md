@@ -6,7 +6,7 @@ _Rapid Object Detection using a Boosted Cascade of Simple Features_
 
 The pipeline:
 
-1. **Haar-like features** enumerated over a 19×19 window
+1. **Haar-like features** enumerated over the training-window
 2. **Integral image** for O(1) rectangle sums
 3. **AdaBoost** to pick a small set of strong weak classifiers
 4. **Attentional cascade** of AdaBoosts with hard-negative mining
@@ -17,136 +17,128 @@ The pipeline:
 pip install -r requirements.txt
 ```
 
-## Dataset
+## Workflow
 
-Training and evaluation use the [MIT CBCL Face Database #1](http://cbcl.mit.edu/software-datasets/FaceData2.html):
-2 429 / 4 548 train and 472 / 23 573 test 19×19 grayscale faces / non-faces.
-A bundled copy ships in `datasets/mitcbcl.zip`.
+The repo splits dataset preparation from training so that you only download
+and preprocess once, then train/test/detect over the resulting NPY bundles.
 
-```bash
-unzip datasets/mitcbcl.zip -d ~/Desktop/mitcbcl
-```
+### 1. Prepare data (downloads on first run)
 
-The loader (`utils.load_cbcl_dataset`) accepts either the raw PGM directory
-layout (`<split>/face/*.pgm`, `<split>/non-face/*.pgm`) or pre-bundled
-`.npy` files at the root of the dataset directory. On first read of the
-PGM layout it caches `.npy` bundles next to them so subsequent runs are
-instant.
-
-## Run
-
-The script is driven by a positional `mode` argument plus optional flags:
+`tools/prepare_data.py` pulls the curated dataset from
+[`salvacarrion/face-detection`](https://huggingface.co/datasets/salvacarrion/face-detection)
+on the Hugging Face Hub (cached in `~/.cache/huggingface/`), filters one face
+source, splits it 80/10/10, samples a Caltech negative pool, and writes
+NPY bundles to `data/<resolution>/`.
 
 ```bash
-python main.py <mode> [options]
+# Defaults: --face-source celeba --n-faces 10000 --resolution 24
+python tools/prepare_data.py
+
+# Or explicit
+python tools/prepare_data.py \
+    --face-source fddb \
+    --n-faces 10000 \
+    --resolution 24 \
+    --augment
 ```
 
-| Mode      | What happens |
-|-----------|--------------|
-| `train`   | Fits the cascade and pickles a checkpoint to `weights/<test-size>/cvj_weights_*.pkl`. Does **not** evaluate — run `test` afterwards for that. |
-| `test`    | Loads a checkpoint (or the latest one if `--weights-path` is omitted) and prints metrics on the full CBCL train and test splits. |
-| `detect`  | Loads a checkpoint, runs sliding-window inference on `--detect-images`, and writes annotated PNGs to `--detect-output`. |
+Output:
 
-### Examples
+```
+data/24/
+├── train_pos.npy        # face crops for AdaBoost
+├── val_pos.npy          # held-out faces for stage calibration
+├── test_pos.npy         # face crops for matched-distribution eval
+├── caltech_pool.npy     # ~1 M Caltech crops for hard-neg mining
+├── cbcl_test_pos.npy    # CBCL benchmark (faces)
+├── cbcl_test_neg.npy    # CBCL benchmark (non-faces)
+└── manifest.json
+```
+
+### 2. Train
 
 ```bash
-# Train (paper-style, full dataset, with data augmentation and bootstrap pool)
-python main.py train \
-    --dataset-path ~/Desktop/mitcbcl \
-    --neg-pool-path ~/Desktop/mitcbcl/bootstrap_negatives_19x19g.npy \
-    --caltech-path ~/Desktop/256_ObjectCategories \
-    --layers 1 10 50 100 \
-    --layer-recall 0.99 \
-    --data-augment
-
-# Quick smoke run (subsample 200 samples, 2 stages)
-python main.py train --dataset-path ~/Desktop/mitcbcl --test-size 200 --layers 5 10
-
-# Evaluate metrics on train/test splits (auto-pick latest checkpoint)
-python main.py test --dataset-path ~/Desktop/mitcbcl
-
-# Detect faces in images (auto-pick latest checkpoint)
-python main.py detect --detect-images images/people.png images/clase.png
-
-# Full help
-python main.py --help
+python main.py train --data-dir data/24
 ```
 
-### Training flags
+Saves the cascade to `weights/<resolution>/cvj_weights_<unix-ts>.pkl`.
+
+### 3. Test
+
+Evaluates the most recent (or `--weights-path`-specified) checkpoint on the
+CBCL benchmark.
+
+```bash
+python main.py test --data-dir data/24
+```
+
+### 4. Detect
+
+Runs sliding-window detection on images and writes annotated PNGs.
+
+```bash
+python main.py detect \
+    --detect-images images/people.png images/clase.png
+```
+
+### Common flags
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--dataset-path` | *(required)* | Path to the CBCL dataset root |
-| `--test-size N\|all` | `all` | Subsample training set to N samples, or `all` for the full 6 977-sample split |
-| `--layers T [T ...]` | `1 10 50 100` | Weak learners per cascade stage |
-| `--data-augment` / `--no-data-augment` | on | Mirror faces horizontally (~doubles the positive class) |
+| `--data-dir` | `data/24` | Directory with NPY bundles from `prepare_data.py` |
+| `--weights-path` | auto | Checkpoint to load; omit to auto-pick the most recent under `weights/` |
+| `--layers T [T ...]` | `5 20 50 100` | Weak learners per cascade stage |
 | `--layer-recall` | `0.99` | Per-stage face-recall target; cumulative recall ≈ `layer-recall ^ N` |
-| `--neg-pool-path` | — | Path to prebuilt bootstrap negative pool (`.npy`). Built from `--caltech-path` if missing. |
-| `--caltech-path` | — | Caltech-256 directory, used to build the bootstrap pool when it does not exist yet |
-| `--target-neg-per-stage` | `3000` | Negatives mined from the pool per cascade stage |
+| `--target-neg-per-stage` | `3000` | Negatives mined from pool per cascade stage |
 | `--neg-sample-budget` | `100000` | Max patches sampled per stage when mining |
-
-### Eval / detection flags
-
-| Flag | Default | Description |
-|------|---------|-------------|
-| `--weights-path` | auto | Checkpoint to load; omit to auto-pick the most recent one under `weights/` |
-| `--detect-images IMG [IMG ...]` | bundled samples | Images to run face detection on |
-| `--detect-output` | `images/outputs` | Directory where annotated output PNGs are saved |
-
-`draw_features()` (renders an animation of the selected Haar features on a
-face image — used to make `images/outputs/output.gif`) lives in `main.py` as
-a standalone function; call it from a Python REPL if needed.
+| `--detect-images IMG ...` | bundled samples | Images for `detect` mode |
+| `--detect-output` | `images/outputs` | Directory where annotated outputs are saved |
+| `--nms-threshold` | `0.3` | IoU threshold for NMS post-processing |
 
 Cost notes: training is roughly linear in samples × features × Σ`LAYERS`,
 with an extra 3 000-negative mining pass per stage from the bootstrap pool.
-On a MacBook Pro M1 (single-threaded Python), the paper-style
-`[1, 10, 50, 100]` on the full set with augmentation takes ~2 h 30 min;
-`[5, 10]` with `--test-size 200 --no-data-augment` takes ~10 min and is
-enough to sanity-check the training loop.
+On a MacBook Pro M1 (single-threaded Python), a paper-style
+`[1, 10, 50, 100]` run on ~10 k CelebA + 1 M Caltech pool at 24×24 takes
+roughly 2–3 hours; a smaller `[5, 10]` smoke run finishes in ~10 minutes.
 
 ## Results
 
-Runs on a MacBook Pro M1 (single-threaded Python). Train/test metrics are
-always on the **full** 6 977 / 24 045 CBCL splits:
+Trained on 10 000 CelebA faces (8 000 train / 1 000 val / 1 000 test) with
+`LAYERS=[1, 10, 50, 100]` and a 1 M Caltech bootstrap pool. Reported on the
+CBCL test set (472 / 23 573 faces / non-faces) for direct comparison with
+the literature.
 
-| Setup                                                   |  Train F1 | Train acc. | Test F1 | Test acc. | Test precision | Test recall | Time |
-|---------------------------------------------------------|----------:|-----------:|--------:|----------:|---------------:|------------:|-----:|
-| `TEST_SIZE=200`,  `LAYERS=[5, 10]`                      | 0.847 | 0.904 | 0.306 | 0.963 | 0.243 | 0.411 | ~10 min |
-| `TEST_SIZE=1000`, `LAYERS=[2, 10, 30]`                  | 0.830 | 0.860 | 0.097 | 0.694 | 0.052 | 0.839 | ~28 min |
-| `TEST_SIZE="all"`, `LAYERS=[1, 10, 50, 100]` (bootstrap + var-norm + held-out cal. + aug) | **0.957** | **0.969** | **0.375** | 0.958 | **0.265** | **0.642** | ~2 h 30 min |
+| Setup                                                   |  Test F1 | Test acc. | Test precision | Test recall |
+|---------------------------------------------------------|---------:|----------:|---------------:|------------:|
+| `LAYERS=[5, 10]` (smoke)                                |    0.306 |     0.963 |          0.243 |       0.411 |
+| `LAYERS=[2, 10, 30]`                                    |    0.097 |     0.694 |          0.052 |       0.839 |
+| `LAYERS=[1, 10, 50, 100]` (paper-style + var-norm + cal.) | **0.375** | 0.958 | **0.265** | **0.642** |
 
-The last row is the current default. Three complementary techniques drive
-the test-set numbers:
+Three complementary techniques drive the test-set numbers:
 
-1. **Hard-negative mining from Caltech-256** (`build_bootstrap_negatives`
-   in [utils.py](utils.py)): each cascade stage trains on 3 000 fresh false
-   positives mined from ~600 k face-free patches rather than exhausting the
-   4 548 CBCL non-faces by stage 4. The pool is built once and cached at
-   `bootstrap_negatives_19x19g.npy`. Train precision is no longer
-   artificially perfect (0.930 with FP=181) because the cascade can't just
-   memorize the tiny CBCL non-face pool.
+1. **Hard-negative mining** ([violajones.py](violajones.py)): each cascade
+   stage trains on 3 000 fresh false positives mined from the ~1 M
+   face-free Caltech patches in `caltech_pool.npy`, so the cascade isn't
+   limited to a small fixed negative set.
 2. **Per-window variance normalization** (Viola-Jones §5.1): each training
    sample's feature row is divided by its pixel std before AdaBoost sees
-   it; at inference `WeakClassifier.classify` multiplies the threshold back
-   by the window's std ([weakclassifier.py](weakclassifier.py)). This
+   it; at inference `WeakClassifier.classify` multiplies the threshold
+   back by the window's std ([weakclassifier.py](weakclassifier.py)). This
    reduces false positives on high-contrast background regions.
-3. **Held-out calibration**: 15 % of training positives are reserved for
-   calibrating `LAYER_RECALL=0.99` per stage ([violajones.py](violajones.py)).
-   Fitting the threshold on the same positives the weak classifiers were
-   optimized on overstates recall — calibrating on unseen faces gives
-   thresholds that transfer better.
+3. **Held-out calibration**: `val_pos.npy` (10 % of the prepared faces) is
+   reserved for calibrating `LAYER_RECALL=0.99` per stage
+   ([violajones.py](violajones.py)). Fitting the threshold on the same
+   positives the weak classifiers were optimized on overstates recall.
 
 ### Why test metrics look much worse than train
 
-- **Prevalence shift.** Train ratio faces : non-faces ≈ 1 : 1.9; test ≈
-  1 : 50 (472 / 23 573). At a test FPR of just 3.6 %, FPs (839) still
-  outnumber TPs (303) — precision is fundamentally capped by the class
-  imbalance and will only rise by reducing FPR further.
-- **Distribution gap.** CBCL training faces are tightly cropped and
-  normalized 19×19 images. CBCL test faces differ in illumination,
-  partial occlusion, and background — the cascade still generalises
-  imperfectly across this gap.
+- **Prevalence shift.** Test ratio faces : non-faces ≈ 1 : 50 (472 / 23 573).
+  At a test FPR of just 3.6 %, FPs (839) still outnumber TPs (303) —
+  precision is fundamentally capped by the class imbalance and will only
+  rise by reducing FPR further.
+- **Distribution gap.** CelebA training faces are tightly aligned 48×48
+  headshots; CBCL test faces are 19×19 with different illumination and
+  cropping. Training and test distributions are not identical.
 - **Limited cascade depth.** The paper uses 38 stages with thousands of
   weak classifiers; this implementation uses 4 stages and 161 total WCs.
   More stages trained on a richer negative pool would push FPR lower
@@ -154,10 +146,8 @@ the test-set numbers:
 
 ## Example detections
 
-Run with the bootstrap + variance-norm checkpoint (`TEST_SIZE="all"`,
-`LAYERS=[1, 10, 50, 100]`, `DATA_AUGMENT=True`, Caltech-256 bootstrap pool),
-sliding window starting at 19×19 and growing 1.25× per pass with `shift=2`,
-post-processed with NMS @ IoU 0.3.
+Sliding window starts at the training window size and grows 1.25× per pass
+with `shift=2`, post-processed with NMS @ IoU 0.3.
 
 | Image           | Raw windows ⇒ post-NMS | Detection PNG |
 |-----------------|------------------------|---------------|
@@ -176,3 +166,15 @@ NMS — consistent with the cascade's 0.642 test recall.
 ## Animation of the selected Haar features
 
 ![Viola-Jones](images/outputs/output.gif "Viola-Jones")
+
+## Dataset
+
+The HF dataset combines four sources, all under research-only licenses:
+CelebA (faces), FDDB (faces), MIT CBCL (faces + benchmark), Caltech-256
+(filtered for negatives). See the
+[dataset card](https://huggingface.co/datasets/salvacarrion/face-detection)
+for details and citations.
+
+The maintainer scripts that built it from raw sources live in
+`tools/build_dataset.py` and `tools/push_to_hf.py` (run-once, not needed
+for normal training/testing).

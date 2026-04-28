@@ -3,34 +3,42 @@ import pickle
 import time
 import numpy as np
 from utils import *
+from tqdm.auto import tqdm
 
 from adaboost import AdaBoost
 
 
 class ViolaJones:
 
-    def __init__(self, layers, features_path=None, layer_recall=0.99):
+    def __init__(self, layers, features_path=None, layer_recall=0.99,
+                 base_size=19):
         assert isinstance(layers, list)
         self.layers = layers  # list with the number T of weak classifiers
         self.clfs = []
-        self.base_width, self.base_height = 19, 19  # Size of the images from training dataset
+        # Native training-window size; sliding-window inference starts here
+        # and grows by `base_scale`. Overwritten in `train()` based on the
+        # actual training data shape so the saved checkpoint is self-describing.
+        self.base_width = self.base_height = base_size
         self.base_scale, self.shift = 1.25, 2
         self.features_path = features_path  # Path to save the features
         # Per-stage face-recall target used to calibrate each AdaBoost layer
         # after training. 0.99 ≈ paper-style; cumulative recall ≈ layer_recall^N.
         self.layer_recall = layer_recall
 
-    def train(self, X, y, neg_pool=None, target_neg_per_stage=3000,
-              neg_sample_budget=100000, val_split=0.15, seed=42):
+    def train(self, train_pos, val_pos, neg_pool, target_neg_per_stage=3000,
+              neg_sample_budget=100000, seed=42):
         """
         Train a Viola-Jones cascade.
 
-        If `neg_pool` (np.ndarray of shape (N, h, w) of face-free patches) is
-        given, the cascade does paper-style hard-negative mining (§3.1):
-        between stages it samples patches from the pool, runs them through
-        the partial cascade, and keeps the false positives as the next
-        stage's training negatives. Otherwise it falls back to the in-set
-        FP loop over the CBCL non-faces in `y`.
+        Args:
+            train_pos: (N, h, w) uint8 array of face crops used for AdaBoost.
+            val_pos:   (M, h, w) uint8 array of held-out faces used to
+                       calibrate each stage's threshold to `layer_recall`.
+            neg_pool:  (P, h, w) uint8 array of face-free patches at the
+                       same resolution. Used as the stage-1 seed and as the
+                       pool for paper-style hard-negative mining (§3.1):
+                       between stages, partial-cascade false positives are
+                       kept as the next stage's training negatives.
 
         Per-window variance normalization (§5.1) is always on:
           - Per-sample pixel stds are computed for positives and negatives.
@@ -40,39 +48,29 @@ class ViolaJones:
           - At inference WeakClassifier.classify multiplies the threshold
             back by the window's std (see weakclassifier.py).
 
-        Calibration is done on a held-out fraction of the positives
-        (`val_split`) — fitting the threshold on the same positives the
-        weak classifiers were optimized on overstates recall.
+        Calibration uses `val_pos` — fitting the threshold on the same
+        positives the weak classifiers were optimized on overstates recall.
         """
         rng = np.random.default_rng(seed)
-        pos_indices_all = np.where(y == 1)[0]
-        cbcl_neg_indices = np.where(y == 0)[0]
-        img_h, img_w = X[0].shape
+        if len(train_pos) == 0 or len(val_pos) == 0:
+            raise ValueError("train_pos and val_pos must be non-empty.")
+        if len(neg_pool) == 0:
+            raise ValueError("neg_pool must be non-empty.")
+        img_h, img_w = train_pos[0].shape
+        self.base_width, self.base_height = img_w, img_h
 
         print("Summary input data:")
-        print("\t- Positives: {:,}".format(len(pos_indices_all)))
-        print("\t- CBCL negatives in y: {:,}".format(len(cbcl_neg_indices)))
-        if neg_pool is not None:
-            print("\t- Bootstrap pool: {:,}".format(len(neg_pool)))
+        print("\t- Train positives: {:,}".format(len(train_pos)))
+        print("\t- Val   positives: {:,}".format(len(val_pos)))
+        print("\t- Negative pool:   {:,}".format(len(neg_pool)))
         print("\t- Size (WxH): {}x{}".format(img_w, img_h))
-
-        # ---- Held-out positives for per-stage calibration ----
-        n_val = max(1, int(val_split * len(pos_indices_all)))
-        shuffled = rng.permutation(pos_indices_all)
-        val_pos_idxs = shuffled[:n_val]
-        train_pos_idxs = shuffled[n_val:]
-
-        X_pos = X[train_pos_idxs]
-        X_val_pos = X[val_pos_idxs]
-        print("Train positives: {:,}  |  Val positives (calibration): {:,}".format(
-            len(X_pos), len(X_val_pos)))
 
         # ---- Positive-side precomputation (done once) ----
         print("Computing integral images for positives...")
-        X_pos_ii = np.array(list(map(integral_image, X_pos)), dtype=np.uint32)
-        X_val_pos_ii = np.array(list(map(integral_image, X_val_pos)), dtype=np.uint32)
-        X_pos_std = self._sample_stds(X_pos)
-        X_val_pos_std = self._sample_stds(X_val_pos)
+        X_pos_ii = np.array(list(map(integral_image, train_pos)), dtype=np.uint32)
+        X_val_pos_ii = np.array(list(map(integral_image, val_pos)), dtype=np.uint32)
+        X_pos_std = self._sample_stds(train_pos)
+        X_val_pos_std = self._sample_stds(val_pos)
 
         print("Building features...")
         start_time = time.time()
@@ -83,13 +81,11 @@ class ViolaJones:
         X_f_pos = self._apply_and_normalize(
             X_pos_ii, X_pos_std, features, cache_name="xf_pos")
 
-        # ---- Stage 1 negatives: random sample from pool, or CBCL fallback ----
-        if neg_pool is not None:
-            n_take = min(target_neg_per_stage, len(neg_pool))
-            idxs = rng.choice(len(neg_pool), size=n_take, replace=False)
-            current_negs_X = neg_pool[idxs]
-        else:
-            current_negs_X = X[cbcl_neg_indices]
+        # ---- Stage 1 negatives: random sample from the pool ----
+        n_take = min(target_neg_per_stage, len(neg_pool))
+        idxs = rng.choice(len(neg_pool), size=n_take, replace=False)
+        current_negs_X = neg_pool[idxs]
+        print("Stage 1 seed negatives: {:,} sampled from pool".format(n_take))
 
         # ---- Cascade training ----
         for stage_idx, T in enumerate(self.layers):
@@ -115,15 +111,13 @@ class ViolaJones:
                 np.ones(X_f_pos.shape[1], dtype=np.float32),
                 np.zeros(X_f_neg.shape[1], dtype=np.float32),
             ])
-            ii_stage = np.concatenate([X_pos_ii, current_negs_ii], axis=0)
 
             perm = rng.permutation(len(y_stage))
             X_f_stage = X_f_stage[:, perm]
             y_stage = y_stage[perm]
-            ii_stage = ii_stage[perm]
 
             clf = AdaBoost(n_estimators=T)
-            clf.train(X_f_stage, y_stage, features, ii_stage)
+            clf.train(X_f_stage, y_stage, features)
 
             clf.calibrate(X_val_pos_ii, X_val_pos_std, target_recall=self.layer_recall)
             print("\t- layer threshold (after calibrate): {:.4f}".format(clf.threshold))
@@ -133,13 +127,8 @@ class ViolaJones:
 
             # ---- Mine negatives for the next stage ----
             if stage_idx + 1 < len(self.layers):
-                if neg_pool is not None:
-                    current_negs_X = self._mine_hard_negatives(
-                        neg_pool, target_neg_per_stage, neg_sample_budget, rng)
-                else:
-                    kept = [neg for neg in current_negs_X if self.classify(neg) == 1]
-                    current_negs_X = (np.array(kept) if kept
-                                      else np.empty((0, img_h, img_w), dtype=X.dtype))
+                current_negs_X = self._mine_hard_negatives(
+                    neg_pool, target_neg_per_stage, neg_sample_budget, rng)
                 print("\t- negatives carried to next layer: {}".format(len(current_negs_X)))
 
     @staticmethod
@@ -172,6 +161,7 @@ class ViolaJones:
         pool_size = len(neg_pool)
         print("Mining hard negatives (target={}, budget={})...".format(target, budget))
         start_time = time.time()
+        pbar = tqdm(total=target, desc='Mining hard negatives', unit='neg')
         while len(found) < target and sampled < budget:
             batch_size = min(2000, budget - sampled, pool_size)
             idxs = rng.choice(pool_size, size=batch_size, replace=False)
@@ -179,9 +169,13 @@ class ViolaJones:
                 patch = neg_pool[idx]
                 if self.classify(patch) == 1:
                     found.append(patch)
+                    pbar.update(1)
                     if len(found) >= target:
                         break
             sampled += batch_size
+            pbar.set_postfix(sampled='{:,}'.format(sampled),
+                           fpr='{:.2f}%'.format(100.0 * len(found) / max(sampled, 1)))
+        pbar.close()
         print("\t- mined {} from {} patches ({:.2f}% FPR) in {}".format(
             len(found), sampled, 100.0 * len(found) / max(sampled, 1),
             get_pretty_time(start_time)))
@@ -195,46 +189,101 @@ class ViolaJones:
         std = max(float(np.std(image)), 1.0)
         return self.classify_ii(ii, scale=scale, std=std)
 
-    def classify_ii(self, ii, scale=1.0, std=1.0):
+    def classify_ii(self, ii, scale=1.0, std=1.0, ox=0, oy=0):
         for clf in self.clfs:
-            if clf.classify(ii, scale=scale, std=std) == 0:
+            if clf.classify(ii, scale=scale, std=std, ox=ox, oy=oy) == 0:
                 return 0
         return 1
 
-    def find_faces(self, pil_image):
-        """Receives a PIL image."""
+    def find_faces(self, pil_image, growth=None, min_shift=1):
+        """
+        Multi-scale sliding-window detection on a PIL image.
+
+        Strategy (paper §5):
+          - One padded integral image + one squared II for the WHOLE image;
+            every per-window feature lookup and per-window std becomes O(1).
+            Querying via (ox, oy) offsets means we never re-cumsum a cropped
+            window (the old per-window II was correct but ~100× slower).
+          - Window shift grows with scale: at scale s we step `max(1, s)`
+            pixels. Stepping 2px at scale 8 just produces near-duplicate
+            detections that NMS later collapses anyway.
+
+        Returns:
+            list of (x1, y1, x2, y2, score) tuples in image coordinates.
+            `score` is the cascade depth (number of stages passed) — useful
+            as a confidence signal for `non_maximum_supression`.
+        """
         w, h = self.base_width, self.base_height
-        growth = self.base_scale
-        regions = []
+        if growth is None:
+            growth = self.base_scale
 
         pil_image = pil_image.convert('L')
         image = np.array(pil_image)
         img_h, img_w = image.shape
+        if img_h < h or img_w < w:
+            return []
 
-        # Sliding window. Per-window integral image (slicing a precomputed
-        # full-image ii is not a valid integral image of the crop) plus
-        # per-window std for variance normalization (paper §5.1).
-        counter = 0
+        # Single-shot integral images for the entire image
+        ii = integral_image(image)               # (img_h+1, img_w+1)
+        ii2 = integral_image_pow2(image)
+
+        # Cheap up-front pass to size the progress bar correctly
+        total_windows = 0
+        s = 1.0
+        while int(w * s) <= img_w and int(h * s) <= img_h:
+            wh, ww = int(h * s), int(w * s)
+            shift = max(min_shift, int(s))
+            total_windows += (1 + (img_h - wh) // shift) * (1 + (img_w - ww) // shift)
+            s *= growth
+
+        regions = []
         scale = 1.0
+        pbar = tqdm(total=total_windows, desc='Sliding window',
+                    unit='win', leave=False)
         while int(w * scale) <= img_w and int(h * scale) <= img_h:
             win_w = int(w * scale)
             win_h = int(h * scale)
+            area = float(win_w * win_h)
+            shift = max(min_shift, int(scale))
 
-            for y1 in np.arange(0, img_h - win_h + 1, self.shift):
-                for x1 in np.arange(0, img_w - win_w + 1, self.shift):
-                    y1, x1 = int(y1), int(x1)
-                    y2, x2 = y1 + win_h, x1 + win_w
-                    window = image[y1:y2, x1:x2]
-                    window_ii = integral_image(window)
-                    window_std = max(float(np.std(window)), 1.0)
+            for y1 in range(0, img_h - win_h + 1, shift):
+                y2 = y1 + win_h
+                for x1 in range(0, img_w - win_w + 1, shift):
+                    x2 = x1 + win_w
+                    # Per-window mean and std via the full-image IIs
+                    sum_x = (int(ii[y2, x2]) - int(ii[y1, x2])
+                             - int(ii[y2, x1]) + int(ii[y1, x1]))
+                    sum_x2 = (int(ii2[y2, x2]) - int(ii2[y1, x2])
+                              - int(ii2[y2, x1]) + int(ii2[y1, x1]))
+                    mean = sum_x / area
+                    var = sum_x2 / area - mean * mean
+                    std = max(var, 0.0) ** 0.5
+                    std = std if std >= 1.0 else 1.0
 
-                    if self.classify_ii(window_ii, scale=scale, std=window_std):
-                        regions.append((x1, y1, x2, y2))
-                    counter += 1
+                    score = self._cascade_score(
+                        ii, scale=scale, std=std, ox=x1, oy=y1)
+                    if score > 0:
+                        regions.append((x1, y1, x2, y2, score))
+                    pbar.update(1)
 
+            pbar.set_postfix(scale='{:.2f}'.format(scale),
+                             detections=len(regions))
             scale *= growth
-
+        pbar.close()
         return regions
+
+    def _cascade_score(self, ii, scale=1.0, std=1.0, ox=0, oy=0):
+        """
+        Run the cascade. Return:
+          0 if any stage rejects (early exit, paper §4),
+          else the number of stages passed (= cascade depth) — used as a
+          confidence proxy for downstream NMS so deeper-passing windows
+          beat shallower neighbors.
+        """
+        for i, clf in enumerate(self.clfs):
+            if clf.classify(ii, scale=scale, std=std, ox=ox, oy=oy) == 0:
+                return 0
+        return len(self.clfs)
 
     def save(self, filename):
         with open(filename + ".pkl", 'wb') as f:

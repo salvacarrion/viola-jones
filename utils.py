@@ -1,57 +1,49 @@
-import os
 import time
-import glob
+
 import numpy as np
 from PIL import Image, ImageDraw
-import matplotlib.pyplot as plt
+from tqdm.auto import tqdm
 
-from features import RectangleRegion, HaarFeature
-from progress.bar import Bar
-import multiprocessing
-
-
-def imshow(img):
-    # scipy.misc.toimage was removed in scipy>=1.3; use PIL directly.
-    arr = np.asarray(img)
-    if arr.dtype != np.uint8:
-        arr = np.clip(arr, 0, 255).astype(np.uint8)
-    Image.fromarray(arr).show()
+from features import RectangleRegion, HaarFeature  # noqa: F401  (re-exported for tests)
 
 
 def load_image(image_path, as_numpy=False):
     pil_img = Image.open(image_path)
     if as_numpy:
         return np.array(pil_img)
-    else:
-        return pil_img
-
-
-def rgb2gray(img):
-    # Formula: https://en.wikipedia.org/wiki/Grayscale#Converting_color_to_grayscale
-    return np.dot(img[..., :3], [0.299, 0.587, 0.114]).astype(np.uint8)
+    return pil_img
 
 
 def integral_image(img):
     """
-    Summed-area table: ii[r, c] = sum of img[:r+1, :c+1].
-    Equivalent to two cumulative sums; orders of magnitude faster than the
-    naive double-loop, especially when called per sliding window.
+    Padded summed-area table:  ii[r+1, c+1] = sum of img[:r+1, :c+1],
+    with ii[0, :] = ii[:, 0] = 0.
+
+    The zero pad lets `RectangleRegion.compute_region` reduce every rectangle
+    sum to four unconditional reads — no `if x1>0` branches per lookup, which
+    matters when we evaluate millions of feature lookups per image.
     """
-    return np.asarray(img, dtype=np.uint32).cumsum(axis=0).cumsum(axis=1)
+    arr = np.asarray(img, dtype=np.uint32)
+    h, w = arr.shape
+    ii = np.zeros((h + 1, w + 1), dtype=np.uint32)
+    ii[1:, 1:] = arr.cumsum(axis=0).cumsum(axis=1)
+    return ii
 
 
 def integral_image_pow2(img):
-    """
-    Squared version of II
-    """
-    return integral_image(img**2)
+    """Padded squared-image II — used for O(1) per-window pixel std."""
+    arr = np.asarray(img, dtype=np.uint64) ** 2
+    h, w = arr.shape
+    ii = np.zeros((h + 1, w + 1), dtype=np.uint64)
+    ii[1:, 1:] = arr.cumsum(axis=0).cumsum(axis=1)
+    return ii
 
 
-def build_features(img_w, img_h, shift=1, scale_factor=1.25, min_w=4, min_h=4):
+def build_features(img_w, img_h, shift=1, min_w=4, min_h=4):
     """
-    Generate values from Haar features
+    Generate values from Haar features.
 
-    White rectangles substract from black ones
+    White rectangles subtract from black ones.
     """
     features = []  # [Tuple(positive regions, negative regions),...]
 
@@ -66,431 +58,220 @@ def build_features(img_w, img_h, shift=1, scale_factor=1.25, min_w=4, min_h=4):
                 while y + w_height <= img_h:
 
                     # Possible Haar regions
-                    immediate = RectangleRegion(x, y, w_width, w_height)  # |X|
-                    right = RectangleRegion(x + w_width, y, w_width, w_height)  # | |X|
-                    right_2 = RectangleRegion(x + w_width * 2, y, w_width, w_height)  # | | |X|
-                    bottom = RectangleRegion(x, y + w_height, w_width, w_height)  # | |/|X|
-                    #bottom_2 = RectangleRegion(x, y + w_height * 2, w_width, w_height)  # | |/| |/|X|
-                    bottom_right = RectangleRegion(x + w_width, y + w_height, w_width, w_height)  # | |/| |X|
+                    immediate = RectangleRegion(x, y, w_width, w_height)
+                    right = RectangleRegion(x + w_width, y, w_width, w_height)
+                    right_2 = RectangleRegion(x + w_width * 2, y, w_width, w_height)
+                    bottom = RectangleRegion(x, y + w_height, w_width, w_height)
+                    bottom_2 = RectangleRegion(x, y + w_height * 2, w_width, w_height)
+                    bottom_right = RectangleRegion(x + w_width, y + w_height, w_width, w_height)
 
-                    # [Haar] 2 rectagles *********
-                    # Horizontal (w-b)
+                    # [Haar] 2 rectangles: horizontal (w-b)
                     if x + w_width * 2 <= img_w:
                         features.append(HaarFeature([immediate], [right]))
-                    # Vertical (w-b)
+                    # [Haar] 2 rectangles: vertical (w-b)
                     if y + w_height * 2 <= img_h:
                         features.append(HaarFeature([bottom], [immediate]))
 
-                    # [Haar] 3 rectagles *********
-                    # Horizontal (w-b-w)
+                    # [Haar] 3 rectangles: horizontal (w-b-w)
                     if x + w_width * 3 <= img_w:
                         features.append(HaarFeature([immediate, right_2], [right]))
-                    # # Vertical (w-b-w)
-                    # if y + w_height * 3 <= img_h:
-                    #     features.append(HaarFeature([immediate, bottom_2], [bottom]))
+                    # [Haar] 3 rectangles: vertical (w-b-w)
+                    if y + w_height * 3 <= img_h:
+                        features.append(HaarFeature([immediate, bottom_2], [bottom]))
 
-                    # [Haar] 4 rectagles *********
+                    # [Haar] 4 rectangles
                     if x + w_width * 2 <= img_w and y + w_height * 2 <= img_h:
                         features.append(HaarFeature([immediate, bottom_right], [bottom, right]))
 
                     y += shift
                 x += shift
-    return features  # np.array(features)
+    return features
 
 
-def apply_features(X_ii, features):
+def features_to_arrays(features):
     """
-    Apply build features (regions) to all the training data (integral images)
+    Pack a list of HaarFeature objects into flat arrays for vectorized
+    evaluation. Rectangles are emitted in feature order so the per-feature
+    sum becomes a single `np.add.reduceat`.
+
+    Returns:
+        coords: (n_rects, 4) int32 array of [x1, y1, x2, y2] in padded-II
+            coordinates (exclusive bottom-right).
+        signs:  (n_rects,) int8 — +1 for negative_regions (added),
+                -1 for positive_regions (subtracted).
+                Convention follows HaarFeature.compute_value =
+                sum(neg) - sum(pos).
+        boundaries: (n_features,) int32 — start index of each feature's
+            rectangle slice within `coords`/`signs`. Empty features (no
+            regions) are not allowed.
     """
-
-    X = np.zeros((len(features), len(X_ii)), dtype=np.int32)
-    # 'y' will be kept as it is => f0=([...], y); f1=([...], y),...
-
-    bar = Bar('Processing features', max=len(features), suffix='%(percent)d%% - %(elapsed_td)s - %(eta_td)s')
-    for j, feature in bar.iter(enumerate(features)):
-    # for j, feature in enumerate(features):
-    #     if (j + 1) % 1000 == 0 and j != 0:
-    #         print("Applying features... ({}/{})".format(j + 1, len(features)))
-
-        # Compute the value of feature 'j' for each image in the training set (Input of the classifier_j)
-        X[j] = list(map(lambda ii: feature.compute_value(ii), X_ii))
-    bar.finish()
-
-    return X
-
-
-def show_sample(x, y, y_pred):
-    target = "Face" if y == 1 else "No face"
-    pred = "Face" if y_pred == 1 else "No face"
-    img_text = "Class: {}  - Prediction: {}".format(target, pred)
-    print(img_text)
-
-    plt.title(img_text)
-    plt.imshow(x, cmap='gray')
-    plt.show()
+    coords, signs, boundaries = [], [], []
+    cursor = 0
+    for f in features:
+        boundaries.append(cursor)
+        for r in f.positive_regions:
+            coords.append((r.x, r.y, r.x + r.width, r.y + r.height))
+            signs.append(-1)
+            cursor += 1
+        for r in f.negative_regions:
+            coords.append((r.x, r.y, r.x + r.width, r.y + r.height))
+            signs.append(1)
+            cursor += 1
+    return (np.asarray(coords, dtype=np.int32),
+            np.asarray(signs, dtype=np.int8),
+            np.asarray(boundaries, dtype=np.int32))
 
 
-def evaluate(clf, X, y, show_samples=False):
+def apply_features(X_ii, features, chunk_size=200):
+    """
+    Vectorized batch evaluation of all Haar features on all integral images.
+
+    Replaces a Python triple-loop (features × samples × rectangles) with
+    numpy fancy indexing. For typical training batches at 24×24 (~50k
+    features × ~13k samples) this is ~30-50× faster than the per-sample
+    `compute_value` loop.
+
+    Args:
+        X_ii: (n_samples, H+1, W+1) padded integral images.
+        features: list of HaarFeature objects.
+        chunk_size: samples processed per batch — caps the (chunk_size ×
+            n_rects) intermediate at a few hundred MB. Lower if you OOM.
+
+    Returns:
+        (n_features, n_samples) int32 feature-value matrix.
+    """
+    coords, signs, boundaries = features_to_arrays(features)
+    n_features = len(features)
+    n_samples = len(X_ii)
+    x1, y1, x2, y2 = coords[:, 0], coords[:, 1], coords[:, 2], coords[:, 3]
+
+    out = np.empty((n_features, n_samples), dtype=np.int32)
+    pbar = tqdm(total=n_samples, desc='Applying features',
+                unit='img', leave=False)
+    for s0 in range(0, n_samples, chunk_size):
+        s1 = min(s0 + chunk_size, n_samples)
+        ii = X_ii[s0:s1]  # (b, H+1, W+1)
+        # ii[:, y, x] with array (y, x) gives (b, n_rects)
+        A = ii[:, y2, x2].astype(np.int64)
+        B = ii[:, y1, x2].astype(np.int64)
+        C = ii[:, y2, x1].astype(np.int64)
+        D = ii[:, y1, x1].astype(np.int64)
+        rect_sums = A - B - C + D                       # (b, n_rects)
+        rect_vals = rect_sums * signs[np.newaxis, :]    # broadcast sign
+        # Sum rectangles belonging to each feature → (b, n_features)
+        feat_vals = np.add.reduceat(rect_vals, boundaries, axis=1)
+        out[:, s0:s1] = feat_vals.T.astype(np.int32)
+        pbar.update(s1 - s0)
+    pbar.close()
+    return out
+
+
+def evaluate(clf, X, y):
     metrics = {}
-    true_positive, true_negative = 0, 0  # Correct
-    false_positive, false_negative = 0, 0  # Incorrect
+    true_positive, true_negative = 0, 0
+    false_positive, false_negative = 0, 0
 
-    for i in range(len(y)):
+    pbar = tqdm(range(len(y)), desc='Evaluating', unit='img')
+    for i in pbar:
         prediction = clf.classify(X[i])
-        if prediction == y[i]:  # Correct
-            if prediction == 1:  # Face
+        if prediction == y[i]:
+            if prediction == 1:
                 true_positive += 1
-            else:  # No-face
+            else:
                 true_negative += 1
-        else:  # Incorrect
-            #if show_samples: show_sample(X[i], y[i], prediction)
-
-            if prediction == 1:  # Face
+        else:
+            if prediction == 1:
                 false_positive += 1
-            else:  # No-face
+            else:
                 false_negative += 1
 
-    # Compute metrics
+        # Live metrics every ~500 samples — cheap, helps spot crashes early
+        if (i + 1) % 500 == 0:
+            seen = true_positive + true_negative + false_positive + false_negative
+            acc = (true_positive + true_negative) / max(seen, 1)
+            tp_fn = true_positive + false_negative
+            tp_fp = true_positive + false_positive
+            rec = true_positive / tp_fn if tp_fn else 0.0
+            prec = true_positive / tp_fp if tp_fp else 0.0
+            pbar.set_postfix(acc='{:.3f}'.format(acc),
+                             rec='{:.3f}'.format(rec),
+                             prec='{:.3f}'.format(prec))
+
     metrics['true_positive'] = true_positive
     metrics['true_negative'] = true_negative
     metrics['false_positive'] = false_positive
     metrics['false_negative'] = false_negative
 
-    metrics['accuracy'] = (true_positive + true_negative)/(true_positive+false_negative+true_negative+false_positive)
-    metrics['precision'] = true_positive / (true_positive+false_positive)
-    metrics['recall'] = true_positive / (true_positive+false_negative)  # or Sensitivity
-    metrics['specifity'] = true_negative/(true_negative+false_positive)
-    metrics['f1'] = (2.0 * metrics['precision'] * metrics['recall']) / (metrics['precision'] + metrics['recall'])
-
+    total = true_positive + false_negative + true_negative + false_positive
+    metrics['accuracy'] = (true_positive + true_negative) / total
+    metrics['precision'] = true_positive / (true_positive + false_positive)
+    metrics['recall'] = true_positive / (true_positive + false_negative)
+    metrics['specifity'] = true_negative / (true_negative + false_positive)
+    metrics['f1'] = (2.0 * metrics['precision'] * metrics['recall']) \
+                    / (metrics['precision'] + metrics['recall'])
     return metrics
-
-
-def unison_shuffled_copies(a, b):
-    assert len(a) == len(b)
-    p = np.random.permutation(len(a))
-    return a[p], b[p]
-
-
-def chunks(l, n):
-    """Yield successive n-sized chunks from l."""
-    for i in range(0, len(l), n):
-        yield l[i:i + n]
-
-
-def load_images_from_dir(path, extension="*.*"):
-    image_list = []
-    for filename in glob.glob(path + '/' + extension):  # assuming gif
-        img = Image.open(filename)
-        #img = img.convert('L')  # To grayscale
-        #img = img.resize((19, 19), Image.ANTIALIAS)  # Resize
-        img = np.array(img)
-        image_list.append(img)
-
-    image_list = np.stack(image_list, axis=0)
-    return image_list
-
-
-def load_dataset(basepath, pos_filename, neg_filename):
-    # Load faces/no faces
-    pos_samples = np.load(basepath + '/' + pos_filename)
-    neg_samples = np.load(basepath + '/' + neg_filename)
-    X = np.concatenate([pos_samples, neg_samples], axis=0)
-
-    # Create labels
-    y = np.zeros(len(pos_samples)+len(neg_samples))
-    y[:len(pos_samples)] = 1
-
-    return X, y
-
-
-def load_cbcl_dataset(basepath, split):
-    """
-    Load the MIT CBCL Face Database #1 split as (X, y).
-
-    Accepts either layout, transparently:
-      - Pre-bundled .npy files at the root:
-          cbcl_<split>_faces_19x19g.npy
-          cbcl_<split>_nofaces_19x19g.npy
-      - Original PGM directory layout:
-          <split>/face/*.pgm
-          <split>/non-face/*.pgm
-        In that case the .npy bundles are written to disk on first read so
-        subsequent loads are fast.
-    """
-    assert split in ("train", "test"), "split must be 'train' or 'test'"
-
-    pos_npy = os.path.join(basepath, "cbcl_{}_faces_19x19g.npy".format(split))
-    neg_npy = os.path.join(basepath, "cbcl_{}_nofaces_19x19g.npy".format(split))
-
-    if not (os.path.exists(pos_npy) and os.path.exists(neg_npy)):
-        pos_dir = os.path.join(basepath, split, "face")
-        neg_dir = os.path.join(basepath, split, "non-face")
-        if not (os.path.isdir(pos_dir) and os.path.isdir(neg_dir)):
-            raise FileNotFoundError(
-                "Could not find CBCL data at {}. Expected either the .npy "
-                "bundles ({}, {}) or the PGM directories ({}, {}).".format(
-                    basepath, pos_npy, neg_npy, pos_dir, neg_dir))
-        print("Bundling PGMs -> {}".format(pos_npy))
-        np.save(pos_npy, load_images_from_dir(pos_dir, "*.pgm"))
-        print("Bundling PGMs -> {}".format(neg_npy))
-        np.save(neg_npy, load_images_from_dir(neg_dir, "*.pgm"))
-
-    pos_samples = np.load(pos_npy)
-    neg_samples = np.load(neg_npy)
-    X = np.concatenate([pos_samples, neg_samples], axis=0)
-    y = np.zeros(len(pos_samples) + len(neg_samples))
-    y[:len(pos_samples)] = 1
-    return X, y
-
-
-def build_bootstrap_negatives(
-    caltech_root,
-    output_path,
-    patches_per_image=20,
-    patch_size=(19, 19),
-    exclude_categories=("faces", "people"),
-    min_image_side=19,
-    seed=42,
-):
-    """
-    Sample face-free 19x19 patches from Caltech-256 for hard-negative mining.
-
-    Walks `<caltech_root>/<NNN>.<category>/`, skips any folder whose name contains
-    one of `exclude_categories` (case-insensitive), and from each remaining image
-    samples `patches_per_image` random crops at random scales (bigger crops are
-    resized down to `patch_size`). The scale jitter matches the sliding-window
-    detector, so the pool covers the same window sizes the cascade will see at
-    inference.
-
-    Args:
-        caltech_root: path to the unzipped 256_ObjectCategories directory.
-        output_path: where to save the resulting .npy bundle (shape (N, h, w)).
-        patches_per_image: random crops drawn per source image.
-        patch_size: final (h, w) of each patch -- 19x19 to match CBCL.
-        exclude_categories: substrings; folders matching any are skipped.
-        min_image_side: skip source images smaller than this on either axis.
-        seed: RNG seed for reproducibility.
-
-    Returns:
-        np.ndarray of shape (N, *patch_size), dtype uint8.
-    """
-    rng = np.random.default_rng(seed)
-    cat_dirs = sorted(
-        d for d in glob.glob(os.path.join(caltech_root, "*")) if os.path.isdir(d)
-    )
-
-    kept, skipped = [], []
-    for d in cat_dirs:
-        name = os.path.basename(d).lower()
-        if any(tag in name for tag in exclude_categories):
-            skipped.append(os.path.basename(d))
-        else:
-            kept.append(d)
-    print("Excluded {} categories: {}".format(len(skipped), skipped))
-    print("Kept {} categories.".format(len(kept)))
-
-    ph, pw = patch_size
-    patches = []
-    bar = Bar('Sampling patches', max=len(kept),
-              suffix='%(percent)d%% - %(elapsed_td)s - %(eta_td)s')
-    for cat_dir in bar.iter(kept):
-        for img_path in glob.glob(os.path.join(cat_dir, "*.jpg")):
-            try:
-                arr = np.array(Image.open(img_path).convert('L'))
-            except (OSError, ValueError):
-                continue
-            h, w = arr.shape
-            if h < min_image_side or w < min_image_side:
-                continue
-            max_scale = max(1.0, min(h, w) / max(ph, pw))
-            for _ in range(patches_per_image):
-                scale = rng.uniform(1.0, max_scale)
-                ch = min(int(round(ph * scale)), h)
-                cw = min(int(round(pw * scale)), w)
-                y0 = int(rng.integers(0, h - ch + 1))
-                x0 = int(rng.integers(0, w - cw + 1))
-                crop = arr[y0:y0 + ch, x0:x0 + cw]
-                if (ch, cw) != (ph, pw):
-                    crop = np.array(
-                        Image.fromarray(crop).resize((pw, ph), Image.BILINEAR)
-                    )
-                patches.append(crop)
-    bar.finish()
-
-    patches = np.stack(patches, axis=0).astype(np.uint8)
-    print("Sampled {:,} patches.".format(len(patches)))
-    out_dir = os.path.dirname(os.path.abspath(output_path))
-    if out_dir:
-        os.makedirs(out_dir, exist_ok=True)
-    np.save(output_path, patches)
-    print("Saved -> {}".format(output_path))
-    return patches
-
-
-def dir2file(folder, savefile):
-    # Load images
-    images = load_images_from_dir(folder, "*.pgm")
-    print("{} images loaded".format(len(images)))
-
-    # Save images
-    np.save(savefile, images)
-    print("Done!")
 
 
 def get_pretty_time(start_time, end_time=None, s="", divisor=1.0):
     if not end_time:
         end_time = time.time()
-    hours, rem = divmod((end_time - start_time)/divisor, 3600)
+    hours, rem = divmod((end_time - start_time) / divisor, 3600)
     minutes, seconds = divmod(rem, 60)
     return "{}{:0>2}:{:0>2}:{:05.8f}".format(s, int(hours), int(minutes), seconds)
 
 
 def draw_bounding_boxes(pil_image, regions, color="green", thickness=3):
-    # Prepare image
+    """Each region may be (x1,y1,x2,y2) or (x1,y1,x2,y2,score) — only the
+    first 4 coords are drawn."""
     source_img = pil_image.convert("RGBA")
     draw = ImageDraw.Draw(source_img)
     for rect in regions:
-        draw.rectangle(tuple(rect), outline=color, width=thickness)
+        draw.rectangle(tuple(rect[:4]), outline=color, width=thickness)
     return source_img
 
 
 def non_maximum_supression(regions, threshold=0.5):
-    # Code from: https://www.pyimagesearch.com/2015/02/16/faster-non-maximum-suppression-python/
-    # if there are no boxes, return an empty list
-    boxes = np.array(regions)
+    """
+    Greedy NMS. Accepts (x1,y1,x2,y2) or (x1,y1,x2,y2,score) tuples; if a
+    score is present, suppression is score-ordered (highest kept first) so
+    a deep-passing detection beats a shallow neighbour. Without a score we
+    fall back to y2-ordering as before.
+
+    Overlap metric is (intersection / smaller-box area) — the same form the
+    original code used. Returns a (n, 4 or 5) ndarray of survivors, dtype
+    int for coords / float for scores.
+    """
+    boxes = np.asarray(regions, dtype=np.float64)
     if len(boxes) == 0:
         return []
+    has_score = boxes.shape[1] >= 5
 
-    # if the bounding boxes integers, convert them to floats --
-    # this is important since we'll be doing a bunch of divisions
-    if boxes.dtype.kind == "i":
-        boxes = boxes.astype("float")
-
-    # initialize the list of picked indexes
-    pick = []
-
-    # grab the coordinates of the bounding boxes
-    x1 = boxes[:, 0]
-    y1 = boxes[:, 1]
-    x2 = boxes[:, 2]
-    y2 = boxes[:, 3]
-
-    # compute the area of the bounding boxes and sort the bounding
-    # boxes by the bottom-right y-coordinate of the bounding box
+    x1 = boxes[:, 0]; y1 = boxes[:, 1]
+    x2 = boxes[:, 2]; y2 = boxes[:, 3]
     area = (x2 - x1 + 1) * (y2 - y1 + 1)
-    idxs = np.argsort(y2)
+    # Highest score first (last in idxs). Fall back to y2 ordering when no
+    # score is provided.
+    idxs = np.argsort(boxes[:, 4]) if has_score else np.argsort(y2)
 
-    # keep looping while some indexes still remain in the indexes
-    # list
+    pick = []
     while len(idxs) > 0:
-        # grab the last index in the indexes list and add the
-        # index value to the list of picked indexes
         last = len(idxs) - 1
         i = idxs[last]
         pick.append(i)
 
-        # find the largest (x, y) coordinates for the start of
-        # the bounding box and the smallest (x, y) coordinates
-        # for the end of the bounding box
         xx1 = np.maximum(x1[i], x1[idxs[:last]])
         yy1 = np.maximum(y1[i], y1[idxs[:last]])
         xx2 = np.minimum(x2[i], x2[idxs[:last]])
         yy2 = np.minimum(y2[i], y2[idxs[:last]])
-
-        # compute the width and height of the bounding box
         w = np.maximum(0, xx2 - xx1 + 1)
         h = np.maximum(0, yy2 - yy1 + 1)
-
-        # compute the ratio of overlap
         overlap = (w * h) / area[idxs[:last]]
+        idxs = np.delete(idxs, np.concatenate(
+            ([last], np.where(overlap > threshold)[0])))
 
-        # delete all indexes from the index list that have
-        idxs = np.delete(idxs, np.concatenate(([last],
-                                               np.where(overlap > threshold)[0])))
-
-    # return only the bounding boxes that were picked using the
-    # integer data type
-    return boxes[pick].astype("int")
-
-
-def non_max_suppression(boxes, scores, threshold):
-    assert boxes.shape[0] == scores.shape[0]
-    # bottom-left origin
-    ys1 = boxes[:, 0]
-    xs1 = boxes[:, 1]
-    # top-right target
-    ys2 = boxes[:, 2]
-    xs2 = boxes[:, 3]
-    # box coordinate ranges are inclusive-inclusive
-    areas = (ys2 - ys1) * (xs2 - xs1)
-    scores_indexes = scores.argsort().tolist()
-    boxes_keep_index = []
-    while len(scores_indexes):
-        index = scores_indexes.pop()
-        boxes_keep_index.append(index)
-        if not len(scores_indexes):
-            break
-        ious = compute_iou(boxes[index], boxes[scores_indexes], areas[index],
-                           areas[scores_indexes])
-        filtered_indexes = set((ious > threshold).nonzero()[0])
-        # if there are no more scores_index
-        # then we should pop it
-        scores_indexes = [
-            v for (i, v) in enumerate(scores_indexes)
-            if i not in filtered_indexes
-        ]
-    return np.array(boxes_keep_index)
-
-
-def compute_iou(box, boxes, box_area, boxes_area):
-    # this is the iou of the box against all other boxes
-    assert boxes.shape[0] == boxes_area.shape[0]
-    # get all the origin-ys
-    # push up all the lower origin-xs, while keeping the higher origin-xs
-    ys1 = np.maximum(box[0], boxes[:, 0])
-    # get all the origin-xs
-    # push right all the lower origin-xs, while keeping higher origin-xs
-    xs1 = np.maximum(box[1], boxes[:, 1])
-    # get all the target-ys
-    # pull down all the higher target-ys, while keeping lower origin-ys
-    ys2 = np.minimum(box[2], boxes[:, 2])
-    # get all the target-xs
-    # pull left all the higher target-xs, while keeping lower target-xs
-    xs2 = np.minimum(box[3], boxes[:, 3])
-    # each intersection area is calculated by the
-    # pulled target-x minus the pushed origin-x
-    # multiplying
-    # pulled target-y minus the pushed origin-y
-    # we ignore areas where the intersection side would be negative
-    # this is done by using maxing the side length by 0
-    intersections = np.maximum(ys2 - ys1, 0) * np.maximum(xs2 - xs1, 0)
-    # each union is then the box area
-    # added to each other box area minusing their intersection calculated above
-    unions = box_area + boxes_area - intersections
-    # element wise division
-    # if the intersection is 0, then their ratio is 0
-    ious = intersections / unions
-    return ious
-
-
-def normalize_image(image):
-    ii = integral_image(image)
-    mean = np.mean(image)
-    stdev = np.std(image)
-    norm_img = (image-mean)/stdev
-    return norm_img
-
-
-def draw_haar_feature(np_img, haar_feature):
-    pil_img = Image.fromarray(np_img).convert("RGBA")
-
-    draw = ImageDraw.Draw(pil_img)
-    for rect in haar_feature.positive_regions:
-        x1, y1, x2, y2 = rect.x, rect.y, rect.x + rect.width - 1, rect.y + rect.height - 1
-        draw.rectangle([x1, y1, x2, y2], fill=(255, 255, 255, 255))
-
-    for rect in haar_feature.negative_regions:
-        x1, y1, x2, y2 = rect.x, rect.y, rect.x + rect.width - 1, rect.y + rect.height - 1
-        draw.rectangle([x1, y1, x2, y2], fill=(0, 0, 0, 255))
-
-    return pil_img
+    out = boxes[pick]
+    if has_score:
+        # Coords as int, score as float — convert manually since astype('int')
+        # would truncate the score column.
+        return np.column_stack([out[:, :4].astype(int), out[:, 4]])
+    return out.astype(int)
