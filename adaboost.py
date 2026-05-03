@@ -17,7 +17,10 @@ class AdaBoost:
         # §4.2 of Viola & Jones (2001).
         self.threshold = 0.5
 
-    def train(self, X, y, features, feature_chunk=2000):
+    # [OPT] feature_chunk=500 (was 2000): caps per-batch intermediates in
+    # _best_stump at ~0.75 GB instead of ~3 GB. Bit-identical results;
+    # slightly more loop iterations but much less memory pressure.
+    def train(self, X, y, features, feature_chunk=500):
         """
         Boost `n_estimators` decision-stump rounds.
 
@@ -193,9 +196,16 @@ class AdaBoost:
         # the threshold to the score at the ceil(target_recall * n)-th-
         # largest position.
         k = max(1, int(np.ceil(target_recall * len(sorted_desc))))
+        # Floor the threshold at the smallest non-zero score (= score when only
+        # the lowest-alpha weak classifier fires). With small T (e.g. T=3) and
+        # high target_recall (0.995), a few faces may genuinely score 0; without
+        # this floor the threshold collapses to 0 and the stage accepts every
+        # window — including flat patches — defeating the cascade's filtering.
+        sum_alpha = sum(self.alphas)
+        min_thr = (min(self.alphas) / sum_alpha) if sum_alpha > 0 else 0.0
         # Don't go above the default 0.5 — calibration is allowed to *loosen*
         # the layer, never to tighten it past the un-calibrated AdaBoost rule.
-        self.threshold = float(min(0.5, sorted_desc[k - 1]))
+        self.threshold = float(min(0.5, max(min_thr, sorted_desc[k - 1])))
 
 
 def _fmt_time(start):

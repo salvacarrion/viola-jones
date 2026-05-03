@@ -32,7 +32,11 @@ def _load_data(data_dir):
         raise FileNotFoundError(
             f"Missing {missing} under {data_dir}. "
             f"Run `python tools/prepare_data.py` first.")
-    return {k: np.load(p) for k, p in paths.items()}
+    bundles = {k: np.load(p) for k, p in paths.items()}
+    # Optional matched-domain seed (`prepare_data.py --neg-source cbcl|mixed`).
+    seed_path = os.path.join(data_dir, "cbcl_neg_seed.npy")
+    bundles["cbcl_neg_seed"] = np.load(seed_path) if os.path.exists(seed_path) else None
+    return bundles
 
 
 def train(data_dir, layers, layer_recall=0.99,
@@ -42,11 +46,15 @@ def train(data_dir, layers, layer_recall=0.99,
     train_pos = bundles["train_pos"]
     val_pos = bundles["val_pos"]
     neg_pool = bundles["caltech_pool"]
+    seed_neg_pool = bundles["cbcl_neg_seed"]
     res = train_pos.shape[1]
     print(f"Loaded data @ {res}×{res} from {data_dir}")
-    print(f"\t- train_pos: {len(train_pos):,}")
-    print(f"\t- val_pos:   {len(val_pos):,}")
-    print(f"\t- neg_pool:  {len(neg_pool):,}")
+    print(f"\t- train_pos:     {len(train_pos):,}")
+    print(f"\t- val_pos:       {len(val_pos):,}")
+    print(f"\t- neg_pool:      {len(neg_pool):,}")
+    if seed_neg_pool is not None:
+        print(f"\t- cbcl_neg_seed: {len(seed_neg_pool):,}  "
+              f"(matched-domain stage-1 seed)")
 
     # Per-resolution feature cache (reused on subsequent runs at same res).
     cache_dir = os.path.join(str(data_dir), "_cache") + os.sep
@@ -56,6 +64,7 @@ def train(data_dir, layers, layer_recall=0.99,
     clf = ViolaJones(layers=layers, features_path=cache_dir,
                      layer_recall=layer_recall, base_size=res)
     clf.train(train_pos, val_pos, neg_pool,
+              seed_neg_pool=seed_neg_pool,
               target_neg_per_stage=target_neg_per_stage,
               neg_sample_budget=neg_sample_budget,
               seed=seed)

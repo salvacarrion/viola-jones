@@ -25,8 +25,8 @@ class ViolaJones:
         # after training. 0.99 ≈ paper-style; cumulative recall ≈ layer_recall^N.
         self.layer_recall = layer_recall
 
-    def train(self, train_pos, val_pos, neg_pool, target_neg_per_stage=3000,
-              neg_sample_budget=100000, seed=42):
+    def train(self, train_pos, val_pos, neg_pool, seed_neg_pool=None,
+              target_neg_per_stage=3000, neg_sample_budget=100000, seed=42):
         """
         Train a Viola-Jones cascade.
 
@@ -35,10 +35,18 @@ class ViolaJones:
             val_pos:   (M, h, w) uint8 array of held-out faces used to
                        calibrate each stage's threshold to `layer_recall`.
             neg_pool:  (P, h, w) uint8 array of face-free patches at the
-                       same resolution. Used as the stage-1 seed and as the
-                       pool for paper-style hard-negative mining (§3.1):
-                       between stages, partial-cascade false positives are
-                       kept as the next stage's training negatives.
+                       same resolution. Used as the stage-1 seed (when
+                       `seed_neg_pool` is None) and as the pool for
+                       paper-style hard-negative mining (§3.1): between
+                       stages, partial-cascade false positives are kept
+                       as the next stage's training negatives.
+            seed_neg_pool: optional (Q, h, w) uint8 array of "near-domain"
+                       non-faces used ONLY for the stage-1 random sample.
+                       When training for a benchmark whose non-faces look
+                       face-like (e.g. CBCL), seeding stage 1 with matched
+                       non-faces fixes specificity drops that pure-Caltech
+                       seeding can't reach. From stage 2 on, hard-neg
+                       mining still draws from `neg_pool`.
 
         Per-window variance normalization (§5.1) is always on:
           - Per-sample pixel stds are computed for positives and negatives.
@@ -81,11 +89,17 @@ class ViolaJones:
         X_f_pos = self._apply_and_normalize(
             X_pos_ii, X_pos_std, features, cache_name="xf_pos")
 
-        # ---- Stage 1 negatives: random sample from the pool ----
-        n_take = min(target_neg_per_stage, len(neg_pool))
-        idxs = rng.choice(len(neg_pool), size=n_take, replace=False)
-        current_negs_X = neg_pool[idxs]
-        print("Stage 1 seed negatives: {:,} sampled from pool".format(n_take))
+        # ---- Stage 1 negatives: random sample from the seed pool ----
+        # Prefer `seed_neg_pool` when provided so stage 1 sees the matched-
+        # domain distribution (e.g. CBCL non-faces) instead of broad Caltech
+        # patches; from stage 2 on, hard-neg mining still draws from `neg_pool`.
+        seed_src = seed_neg_pool if (seed_neg_pool is not None and
+                                     len(seed_neg_pool) > 0) else neg_pool
+        seed_label = "seed_neg_pool" if seed_src is seed_neg_pool else "neg_pool"
+        n_take = min(target_neg_per_stage, len(seed_src))
+        idxs = rng.choice(len(seed_src), size=n_take, replace=False)
+        current_negs_X = seed_src[idxs]
+        print("Stage 1 seed negatives: {:,} sampled from {}".format(n_take, seed_label))
 
         # ---- Cascade training ----
         for stage_idx, T in enumerate(self.layers):
@@ -111,10 +125,17 @@ class ViolaJones:
                 np.ones(X_f_pos.shape[1], dtype=np.float32),
                 np.zeros(X_f_neg.shape[1], dtype=np.float32),
             ])
+            # [OPT] Free X_f_neg immediately — its data is already copied
+            # into X_f_stage by np.concatenate; keeping both wastes ~2.4 GB.
+            del X_f_neg
 
-            perm = rng.permutation(len(y_stage))
-            X_f_stage = X_f_stage[:, perm]
-            y_stage = y_stage[perm]
+            # [OPT] Permutation commented out to avoid a full copy of
+            # X_f_stage (~10 GB) via fancy indexing. AdaBoost._best_stump
+            # does argsort per feature over ALL samples, so column order
+            # is irrelevant to the result.
+            # perm = rng.permutation(len(y_stage))
+            # X_f_stage = X_f_stage[:, perm]
+            # y_stage = y_stage[perm]
 
             clf = AdaBoost(n_estimators=T)
             clf.train(X_f_stage, y_stage, features)
@@ -142,8 +163,13 @@ class ViolaJones:
         cache_path = (self.features_path + cache_name + ".npy"
                       if (cache_name and self.features_path) else None)
         if cache_path and os.path.exists(cache_path):
-            print("Loading cached normalized features: {}".format(cache_path))
-            return np.load(cache_path)
+            # [OPT] Memory-mapped load: X_f_pos is never modified during
+            # training (only read for concat + calibration), so we let the
+            # OS page it in/out from the .npy on demand instead of loading
+            # ~7.7 GB into RAM. Numerically identical to np.load(cache_path).
+            print("Loading cached normalized features (memmap): {}".format(cache_path))
+            # return np.load(cache_path)  # original: full load into RAM
+            return np.load(cache_path, mmap_mode='r')
         print("Applying features to {:,} samples...".format(len(X_ii)))
         start_time = time.time()
         X_f = apply_features(X_ii, features).astype(np.float32)

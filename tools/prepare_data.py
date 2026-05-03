@@ -61,9 +61,14 @@ def _to_gray(pil_img: Image.Image, resolution: int) -> np.ndarray:
 
 def gather_faces(ds_train, source: str, resolution: int, n_faces: int,
                  rng: np.random.Generator) -> np.ndarray:
-    """Filter train split by source, sample n_faces, and return as (N, res, res) uint8."""
-    print(f"Filtering train split by source='{source}'...")
-    subset = ds_train.filter(lambda x: x["source"] == source)
+    """Filter train split by source AND label==1, sample n_faces, return (N, res, res) uint8.
+
+    The label filter matters for sources that ship both faces and non-faces under
+    the same `source` tag (notably MIT CBCL: 2429 faces + 4548 non-faces in train).
+    Without it, ~65% of "cbcl" positives would actually be non-face patches.
+    """
+    print(f"Filtering train split by source='{source}' AND label==1...")
+    subset = ds_train.filter(lambda x: x["source"] == source and x["label"] == 1)
     n_avail = len(subset)
     print(f"\t- {n_avail:,} {source} faces available")
 
@@ -85,6 +90,27 @@ def split_three_way(n: int, train_frac: float, val_frac: float,
     n_train = int(n * train_frac)
     n_val = int(n * val_frac)
     return perm[:n_train], perm[n_train:n_train + n_val], perm[n_train + n_val:]
+
+
+def gather_cbcl_negatives(ds_train, resolution: int,
+                          augment: bool = False) -> np.ndarray:
+    """Load CBCL non-face crops (`source=='cbcl' AND label==0`) from the train split.
+
+    These are 19×19 patches curated to be face-like — the matched-domain seed
+    pool for stage 1. Resized to `resolution` if different from native.
+    Returned as (N, R, R) uint8.
+    """
+    print("Filtering train split by source='cbcl' AND label==0 (non-faces)...")
+    subset = ds_train.filter(lambda x: x["source"] == "cbcl" and x["label"] == 0)
+    n = len(subset)
+    print(f"\t- {n:,} CBCL non-faces available")
+    arr = np.empty((n, resolution, resolution), dtype=np.uint8)
+    for i, row in enumerate(tqdm(subset, desc="cbcl non-faces", unit="img")):
+        arr[i] = _to_gray(row["image"], resolution)
+    if augment:
+        arr = np.concatenate([arr, arr[:, :, ::-1]], axis=0)
+        print(f"\t- augmented with h-flips → {len(arr):,}")
+    return arr
 
 
 def build_caltech_pool(ds_negatives, resolution: int, n_patches: int,
@@ -144,8 +170,10 @@ def main():
     ap = argparse.ArgumentParser(
         description=__doc__,
         formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--face-source", choices=["celeba", "fddb"], default="celeba",
-                    help="Face dataset to train on (default: celeba).")
+    ap.add_argument("--face-source", choices=["celeba", "fddb", "cbcl"], default="celeba",
+                    help="Face dataset to train on (default: celeba). "
+                         "Use 'cbcl' for matched-domain training when evaluating "
+                         "on the CBCL benchmark (~6977 faces available).")
     ap.add_argument("--n-faces", type=int, default=DEFAULT_N_FACES,
                     help=f"Faces to sample from source (default: {DEFAULT_N_FACES:,}).")
     ap.add_argument("--resolution", type=int, default=DEFAULT_RESOLUTION,
@@ -160,6 +188,16 @@ def main():
                     help=f"Caltech patches to extract (default: {DEFAULT_POOL_SIZE:,}).")
     ap.add_argument("--patches-per-image", type=int, default=DEFAULT_PATCHES_PER_IMAGE,
                     help=f"Random crops per Caltech image (default: {DEFAULT_PATCHES_PER_IMAGE}).")
+    ap.add_argument("--neg-source", choices=["caltech", "cbcl", "mixed"],
+                    default="caltech",
+                    help="Negative pool source. "
+                         "'caltech' (default): random patches from Caltech-256 — "
+                         "diverse but easy. "
+                         "'cbcl': CBCL non-face crops from the train split (~4548) — "
+                         "matched-domain but small, will exhaust after a few stages. "
+                         "'mixed' (recommended for CBCL benchmark): CBCL non-faces "
+                         "as the stage-1 seed (matched) + Caltech patches for "
+                         "deeper hard-negative mining (diverse).")
     ap.add_argument("--include-cbcl-test", action="store_true", default=True,
                     help="Bundle CBCL test as cbcl_test_*.npy (default: on).")
     ap.add_argument("--no-include-cbcl-test", dest="include_cbcl_test",
@@ -181,7 +219,8 @@ def main():
     out_dir.mkdir(parents=True, exist_ok=True)
 
     print(f"== Preparing data @ {args.resolution}×{args.resolution} → {out_dir}/")
-    print(f"   source={args.face_source}  n_faces={args.n_faces:,}  "
+    print(f"   face_source={args.face_source}  neg_source={args.neg_source}  "
+          f"n_faces={args.n_faces:,}  "
           f"split={args.train_frac:.2f}/{args.val_frac:.2f}/{test_frac:.2f}  "
           f"augment={args.augment}")
     print(f"   HF repo: {args.repo_id}")
@@ -202,12 +241,40 @@ def main():
 
     if args.augment:
         train_pos = np.concatenate([train_pos, train_pos[:, :, ::-1]], axis=0)
+        # Augment val too — calibration needs a stable 99-th percentile of
+        # positive scores, and 200-ish samples is too few for that. Augmenting
+        # only train and not val left the cascade calibrated against an
+        # easier-than-test val set, which compounded into ~40pp recall drop
+        # across 4 stages on the CBCL benchmark.
+        val_pos   = np.concatenate([val_pos,   val_pos[:, :, ::-1]],   axis=0)
         print(f"   Augmented train_pos with h-flips → {len(train_pos):,}")
+        print(f"   Augmented val_pos   with h-flips → {len(val_pos):,}")
 
-    # ---- Caltech mining pool ----
-    caltech_pool = build_caltech_pool(
-        ds["negatives"], args.resolution, args.pool_size,
-        args.patches_per_image, rng)
+    # ---- Negative pool(s) ----
+    # `caltech_pool.npy` is the canonical mining pool (main.py expects this name).
+    # `cbcl_neg_seed.npy` is an optional matched-domain seed pool. When present,
+    # main.py passes it to ViolaJones.train as the stage-1 seed instead of
+    # sampling stage 1 from the broad Caltech pool — fixes the FDDB/Caltech →
+    # CBCL benchmark domain gap that produces low specificity.
+    cbcl_neg_seed = None
+    caltech_pool = None
+    if args.neg_source == "caltech":
+        caltech_pool = build_caltech_pool(
+            ds["negatives"], args.resolution, args.pool_size,
+            args.patches_per_image, rng)
+    elif args.neg_source == "cbcl":
+        # Use CBCL non-faces as both seed AND mining pool. Pool will exhaust
+        # after a few stages (only ~4548, ~9k augmented) — that's expected.
+        cbcl_neg = gather_cbcl_negatives(ds["train"], args.resolution,
+                                         augment=args.augment)
+        cbcl_neg_seed = cbcl_neg
+        caltech_pool = cbcl_neg  # Same array as the "pool" too, so main.py works
+    elif args.neg_source == "mixed":
+        cbcl_neg_seed = gather_cbcl_negatives(ds["train"], args.resolution,
+                                              augment=args.augment)
+        caltech_pool = build_caltech_pool(
+            ds["negatives"], args.resolution, args.pool_size,
+            args.patches_per_image, rng)
 
     # ---- CBCL benchmark (optional) ----
     cbcl_pos = cbcl_neg = None
@@ -220,6 +287,13 @@ def main():
     np.save(out_dir / "val_pos.npy",      val_pos)
     np.save(out_dir / "test_pos.npy",     test_pos)
     np.save(out_dir / "caltech_pool.npy", caltech_pool)
+    cbcl_seed_path = out_dir / "cbcl_neg_seed.npy"
+    if cbcl_neg_seed is not None:
+        np.save(cbcl_seed_path, cbcl_neg_seed)
+    elif cbcl_seed_path.exists():
+        # Stale seed from a previous --neg-source run would silently bias
+        # training; remove it when this run doesn't produce one.
+        cbcl_seed_path.unlink()
     if cbcl_pos is not None:
         np.save(out_dir / "cbcl_test_pos.npy", cbcl_pos)
         np.save(out_dir / "cbcl_test_neg.npy", cbcl_neg)
@@ -228,6 +302,7 @@ def main():
         "resolution": args.resolution,
         "seed": args.seed,
         "face_source": args.face_source,
+        "neg_source": args.neg_source,
         "n_faces_sampled": int(n),
         "train_frac": args.train_frac,
         "val_frac": args.val_frac,
@@ -235,12 +310,13 @@ def main():
         "augment": bool(args.augment),
         "repo_id": args.repo_id,
         "counts": {
-            "train_pos":     int(len(train_pos)),
-            "val_pos":       int(len(val_pos)),
-            "test_pos":      int(len(test_pos)),
-            "caltech_pool":  int(len(caltech_pool)),
-            "cbcl_test_pos": int(len(cbcl_pos)) if cbcl_pos is not None else 0,
-            "cbcl_test_neg": int(len(cbcl_neg)) if cbcl_neg is not None else 0,
+            "train_pos":      int(len(train_pos)),
+            "val_pos":        int(len(val_pos)),
+            "test_pos":       int(len(test_pos)),
+            "caltech_pool":   int(len(caltech_pool)),
+            "cbcl_neg_seed":  int(len(cbcl_neg_seed)) if cbcl_neg_seed is not None else 0,
+            "cbcl_test_pos":  int(len(cbcl_pos)) if cbcl_pos is not None else 0,
+            "cbcl_test_neg":  int(len(cbcl_neg)) if cbcl_neg is not None else 0,
         },
         "generated_at": time.strftime("%Y-%m-%d %H:%M:%S"),
     }
