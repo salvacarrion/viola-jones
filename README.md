@@ -257,11 +257,28 @@ with `shift=2`, post-processed with NMS @ IoU 0.3.
 | `i1.jpg`        | ![i1](images/outputs/i1_detected.png)             |
 | `judybats.jpg`  | ![judybats](images/outputs/judybats_detected.png) |
 
-Variance normalization suppresses high-contrast non-face regions before
-they ever reach the cascade, so raw candidate counts stay manageable and
-NMS resolves the rest. On real-image detection, the FPR=2.3 % from the
-benchmark becomes much more tolerable — most spurious windows collapse
-into a few duplicates that NMS removes.
+What you actually see in those PNGs lines up with the benchmark numbers
+(recall ≈ 0.5, FPR ≈ 0.02), once you translate them to detection-time
+behavior:
+
+- **Recall side**: most clearly-frontal faces get at least one box. On a
+  single subject (`i1.jpg`) the same face triggers several overlapping
+  boxes at different scales — NMS suppresses ~60 % of duplicates but
+  leaves a stack of 3-5 around the face. For the `images/people.png`
+  group shot, the model finds most heads.
+- **FPR side**: 2.3 % FPR sounds tiny but a 600×400 image at growth=1.25
+  contains ~2-5 K candidate windows, so even 2 % FPR yields tens of
+  spurious boxes. The cascade is most fooled by:
+  - **Suits and ties** in `people.png` — the dark-light-dark vertical
+    pattern matches "eyes-nose-eyes" Haar templates.
+  - **Building windows and crowd backgrounds** in `physics.jpg` —
+    repeating dark-light grids.
+  - **Hair/shadow boundaries** in `judybats.jpg` and `clase.png`.
+
+Variance normalization keeps raw candidate counts manageable, but at 4
+stages the cascade can't reject these face-like patterns reliably.
+Cleaner detection on real images would need a deeper cascade and/or
+24×24 features, not a different post-processing step.
 
 ## Animation of the selected Haar features
 
