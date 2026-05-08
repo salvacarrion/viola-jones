@@ -14,7 +14,8 @@
       "Bash(/opt/homebrew/bin/python3 -c \"import sys; print\\(sys.path\\)\")",
       "Bash(xargs -I{} ls {})",
       "Bash(python3 -c \"import ast; ast.parse\\(open\\('violajones.py'\\).read\\(\\)\\); print\\('violajones.py OK'\\)\")",
-      "Bash(python3 -c \"import ast; ast.parse\\(open\\('main.py'\\).read\\(\\)\\); print\\('main.py OK'\\)\")"
+      "Bash(python3 -c \"import ast; ast.parse\\(open\\('main.py'\\).read\\(\\)\\); print\\('main.py OK'\\)\")",
+      "Bash(python main.py train --help)"
     ]
   }
 }
