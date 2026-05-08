@@ -203,9 +203,14 @@ class AdaBoost:
         # window — including flat patches — defeating the cascade's filtering.
         sum_alpha = sum(self.alphas)
         min_thr = (min(self.alphas) / sum_alpha) if sum_alpha > 0 else 0.0
-        # Don't go above the default 0.5 — calibration is allowed to *loosen*
-        # the layer, never to tighten it past the un-calibrated AdaBoost rule.
-        self.threshold = float(min(0.5, max(min_thr, sorted_desc[k - 1])))
+        # Allow tightening beyond 0.5 when val_pos supports it. The previous
+        # 0.5 cap (the un-calibrated AdaBoost majority-vote rule) was a
+        # safety net, but it artificially blocked deep stages where most
+        # val positives score >> 0.5; calibration wanted to push higher and
+        # got clamped, leaving FPR higher than necessary on test. The 0.95
+        # cap still guards against the degenerate "threshold ≈ 1.0 accepts
+        # nothing" failure mode.
+        self.threshold = float(min(0.95, max(min_thr, sorted_desc[k - 1])))
 
 
 def _fmt_time(start):

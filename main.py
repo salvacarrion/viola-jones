@@ -60,6 +60,16 @@ def train(data_dir, layers, layer_recall=0.99,
     cache_dir = os.path.join(str(data_dir), "_cache") + os.sep
     os.makedirs(cache_dir, exist_ok=True)
 
+    # Allocate the output path BEFORE training so per-stage checkpoints
+    # land at the same file the final cascade will be saved to. After
+    # each stage `clf.train` overwrites this file with the partial cascade
+    # — so a crash at hour 9 of a 12 h run leaves a usable 6-stage model
+    # rather than nothing. `pick_weights` picks the most recently mtime'd
+    # file, so the partial-then-final progression works transparently.
+    weights_subdir = os.path.join(weights_dir, str(res))
+    os.makedirs(weights_subdir, exist_ok=True)
+    out_path = os.path.join(weights_subdir, f"cvj_weights_{int(time.time())}")
+
     print("\nTraining Viola-Jones...")
     clf = ViolaJones(layers=layers, features_path=cache_dir,
                      layer_recall=layer_recall, base_size=res)
@@ -67,14 +77,10 @@ def train(data_dir, layers, layer_recall=0.99,
               seed_neg_pool=seed_neg_pool,
               target_neg_per_stage=target_neg_per_stage,
               neg_sample_budget=neg_sample_budget,
-              seed=seed)
+              seed=seed,
+              checkpoint_path=out_path)
     print("Training finished!")
-
-    weights_subdir = os.path.join(weights_dir, str(res))
-    os.makedirs(weights_subdir, exist_ok=True)
-    out_path = os.path.join(weights_subdir, f"cvj_weights_{int(time.time())}")
-    clf.save(out_path)
-    print(f"Weights saved -> {out_path}.pkl")
+    print(f"Final weights -> {out_path}.pkl")
     return clf
 
 
@@ -122,7 +128,8 @@ def pick_weights(path=None):
 
 
 def find_faces(weight_path=None, image_paths=None, output_dir="images/outputs",
-               nms_threshold=0.3):
+               nms_threshold=0.3, nms_mode="weighted", nms_metric="hybrid",
+               min_shift=None, scale_factor=None):
     weight_path = pick_weights(weight_path)
     print(f"Using weights: {weight_path}")
 
@@ -135,11 +142,12 @@ def find_faces(weight_path=None, image_paths=None, output_dir="images/outputs",
     for face_path in image_paths:
         print(f"Detecting on {face_path}")
         pil_img = load_image(face_path)
-        regions = clf.find_faces(pil_img)
+        regions = clf.find_faces(pil_img, growth=scale_factor, min_shift=min_shift)
         print(f"\t- raw regions: {len(regions)}")
 
         if regions:
-            regions = non_maximum_supression(regions, threshold=nms_threshold)
+            regions = non_maximum_supression(regions, threshold=nms_threshold,
+                                             mode=nms_mode, metric=nms_metric)
             print(f"\t- after NMS:  {len(regions)}")
 
         drawn_img = draw_bounding_boxes(pil_img, list(regions), thickness=2)
@@ -189,6 +197,30 @@ if __name__ == "__main__":
                         help="Directory where annotated outputs are saved")
     parser.add_argument("--nms-threshold", type=float, default=0.3,
                         help="IoU threshold for NMS post-processing (default: 0.3)")
+    parser.add_argument("--nms-mode", choices=["weighted", "greedy"],
+                        default="weighted",
+                        help="NMS strategy. 'weighted' (default) fuses "
+                             "overlapping boxes into a score-weighted average "
+                             "— better for multi-scale duplicates of the same "
+                             "face. 'greedy' is classic NMS (drop overlapping).")
+    parser.add_argument("--nms-metric", choices=["hybrid", "iou", "iom"],
+                        default="hybrid",
+                        help="Overlap metric. 'hybrid' (default) fuses if "
+                             "either IoU > threshold or IoM > 0.7 — handles "
+                             "both equal-scale duplicates and nested "
+                             "different-scale duplicates (the cluster of "
+                             "tiny boxes inside a face box at scale 1× vs "
+                             "2×). 'iou' is standard. 'iom' is "
+                             "intersection-over-min-area (more aggressive).")
+    parser.add_argument("--detect-shift", type=int, default=None,
+                        help="Sliding-window step in pixels (default: model's "
+                             "self.shift, typically 2). Increase to 3-4 for "
+                             "faster detection at a small recall cost.")
+    parser.add_argument("--detect-scale", type=float, default=None,
+                        help="Scale-pyramid growth factor (default: model's "
+                             "self.base_scale, typically 1.25). Increase to "
+                             "1.3–1.5 for fewer pyramid levels and faster "
+                             "detection.")
 
     args = parser.parse_args()
 
@@ -207,6 +239,10 @@ if __name__ == "__main__":
         find_faces(weight_path=args.weights_path,
                    image_paths=args.detect_images,
                    output_dir=args.detect_output,
-                   nms_threshold=args.nms_threshold)
+                   nms_threshold=args.nms_threshold,
+                   nms_mode=args.nms_mode,
+                   nms_metric=args.nms_metric,
+                   min_shift=args.detect_shift,
+                   scale_factor=args.detect_scale)
 
     print("\n" + get_pretty_time(start_time, s="Total time: "))

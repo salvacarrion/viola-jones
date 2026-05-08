@@ -26,7 +26,8 @@ class ViolaJones:
         self.layer_recall = layer_recall
 
     def train(self, train_pos, val_pos, neg_pool, seed_neg_pool=None,
-              target_neg_per_stage=3000, neg_sample_budget=100000, seed=42):
+              target_neg_per_stage=3000, neg_sample_budget=100000, seed=42,
+              checkpoint_path=None):
         """
         Train a Viola-Jones cascade.
 
@@ -146,10 +147,21 @@ class ViolaJones:
 
             print("\t- stage time: " + get_pretty_time(stage_start))
 
+            # Per-stage checkpoint: lets long training runs survive a crash /
+            # laptop sleep / Ctrl-C. The saved file IS a usable cascade with
+            # however many stages have completed — `main.py test` and
+            # `detect` work against partial cascades, just at the
+            # in-progress operating point.
+            if checkpoint_path is not None:
+                self.save(checkpoint_path)
+                print("\t- checkpoint -> {}.pkl  (stages {}/{})".format(
+                    checkpoint_path, stage_idx + 1, len(self.layers)))
+
             # ---- Mine negatives for the next stage ----
             if stage_idx + 1 < len(self.layers):
                 current_negs_X = self._mine_hard_negatives(
-                    neg_pool, target_neg_per_stage, neg_sample_budget, rng)
+                    neg_pool, target_neg_per_stage, neg_sample_budget, rng,
+                    seed_neg_pool=seed_neg_pool)
                 print("\t- negatives carried to next layer: {}".format(len(current_negs_X)))
 
     @staticmethod
@@ -180,19 +192,25 @@ class ViolaJones:
             print("Cached -> {}".format(cache_path))
         return X_f
 
-    def _mine_hard_negatives(self, neg_pool, target, budget, rng):
-        """Sample patches from `neg_pool`, keep those misclassified as faces."""
+    def _mine_from_pool(self, pool, target, budget, rng, label=""):
+        """Sample patches from one pool, keep those misclassified as faces.
+
+        Returns a list (not array) so the caller can concatenate across pools.
+        """
         found = []
         sampled = 0
-        pool_size = len(neg_pool)
-        print("Mining hard negatives (target={}, budget={})...".format(target, budget))
+        pool_size = len(pool)
+        if pool_size == 0 or target <= 0 or budget <= 0:
+            return found
+        prefix = f"[{label}] " if label else ""
         start_time = time.time()
-        pbar = tqdm(total=target, desc='Mining hard negatives', unit='neg')
+        pbar = tqdm(total=target, desc=f"Mining{' '+label if label else ''}",
+                    unit='neg', leave=False)
         while len(found) < target and sampled < budget:
             batch_size = min(2000, budget - sampled, pool_size)
             idxs = rng.choice(pool_size, size=batch_size, replace=False)
             for idx in idxs:
-                patch = neg_pool[idx]
+                patch = pool[idx]
                 if self.classify(patch) == 1:
                     found.append(patch)
                     pbar.update(1)
@@ -202,9 +220,43 @@ class ViolaJones:
             pbar.set_postfix(sampled='{:,}'.format(sampled),
                            fpr='{:.2f}%'.format(100.0 * len(found) / max(sampled, 1)))
         pbar.close()
-        print("\t- mined {} from {} patches ({:.2f}% FPR) in {}".format(
-            len(found), sampled, 100.0 * len(found) / max(sampled, 1),
-            get_pretty_time(start_time)))
+        print("\t- {}mined {} from {} ({:.2f}% FPR) in {}".format(
+            prefix, len(found), sampled,
+            100.0 * len(found) / max(sampled, 1), get_pretty_time(start_time)))
+        return found
+
+    def _mine_hard_negatives(self, neg_pool, target, budget, rng,
+                             seed_neg_pool=None):
+        """Mine hard negatives, optionally stratified across two pools.
+
+        When `seed_neg_pool` is given (e.g. CBCL non-faces), allocate half
+        the target/budget to it and the other half to `neg_pool` (Caltech).
+        This keeps matched-domain hard negatives in the training mix at
+        EVERY stage, not just stage 1 — fixing the "stage 9 trained with
+        only Caltech-flavored negatives" symptom we observed.
+        """
+        print("Mining hard negatives (target={}, budget={})...".format(target, budget))
+        found = []
+        if seed_neg_pool is not None and len(seed_neg_pool) > 0:
+            t_seed = target // 2
+            t_main = target - t_seed
+            # Cap seed budget at "scan whole pool 2×" — past that, we're
+            # just resampling the same patches and mining returns nothing
+            # new. Any unspent budget is reallocated to the main pool below.
+            b_seed_requested = budget // 2
+            b_seed = min(b_seed_requested, len(seed_neg_pool) * 2)
+            b_main = budget - b_seed
+            found += self._mine_from_pool(seed_neg_pool, t_seed, b_seed, rng,
+                                          label="seed")
+            # If the seed pool didn't yield its share (small pool gets
+            # exhausted in deep stages), backfill from the main pool.
+            shortfall = t_seed - len(found)
+            if shortfall > 0:
+                t_main += shortfall
+            found += self._mine_from_pool(neg_pool, t_main, b_main, rng,
+                                          label="caltech")
+        else:
+            found += self._mine_from_pool(neg_pool, target, budget, rng)
         if not found:
             return np.empty((0, *neg_pool.shape[1:]), dtype=neg_pool.dtype)
         return np.array(found)
@@ -221,7 +273,7 @@ class ViolaJones:
                 return 0
         return 1
 
-    def find_faces(self, pil_image, growth=None, min_shift=1):
+    def find_faces(self, pil_image, growth=None, min_shift=None):
         """
         Multi-scale sliding-window detection on a PIL image.
 
@@ -242,6 +294,8 @@ class ViolaJones:
         w, h = self.base_width, self.base_height
         if growth is None:
             growth = self.base_scale
+        if min_shift is None:
+            min_shift = self.shift
 
         pil_image = pil_image.convert('L')
         image = np.array(pil_image)

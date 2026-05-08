@@ -230,48 +230,89 @@ def draw_bounding_boxes(pil_image, regions, color="green", thickness=3):
     return source_img
 
 
-def non_maximum_supression(regions, threshold=0.5):
+def non_maximum_supression(regions, threshold=0.3, mode="weighted",
+                           metric="hybrid", iom_threshold=0.7):
     """
-    Greedy NMS. Accepts (x1,y1,x2,y2) or (x1,y1,x2,y2,score) tuples; if a
-    score is present, suppression is score-ordered (highest kept first) so
-    a deep-passing detection beats a shallow neighbour. Without a score we
-    fall back to y2-ordering as before.
+    Non-maximum suppression with two cluster strategies and three overlap
+    metrics. Defaults are tuned for V-J multi-scale face detection.
 
-    Overlap metric is (intersection / smaller-box area) — the same form the
-    original code used. Returns a (n, 4 or 5) ndarray of survivors, dtype
-    int for coords / float for scores.
+    `mode`:
+      'greedy'   - keep highest-scoring box, drop overlapping, repeat.
+      'weighted' - fuse cluster of overlapping boxes into ONE
+                   score-weighted-average box (default; cleaner output
+                   when the same face fires at multiple scales).
+
+    `metric` controls when boxes are considered "overlapping":
+      'iou'    - intersection over union > `threshold`. Standard but
+                 over-conservative for nested boxes at very different
+                 scales (a 24×24 box fully inside a 48×48 box has IoU
+                 0.25 — below the default 0.3 — so they don't fuse).
+      'iom'    - intersection over min-area > `threshold`. Symmetric
+                 containment: nested boxes at any scale ratio give 1.0,
+                 so they always fuse. Can over-fuse if a tiny FP is
+                 accidentally inside a real face box, but in face
+                 detection that's rare.
+      'hybrid' - fuse if EITHER (IoU > threshold) or (IoM > iom_threshold).
+                 Catches both equal-scale duplicates and nested
+                 different-scale duplicates. Default — recommended for
+                 V-J detect mode.
+
+    Accepts (x1,y1,x2,y2) or (x1,y1,x2,y2,score). Returns a (n, 4 or 5)
+    ndarray; coords as int, score as float when present.
     """
     boxes = np.asarray(regions, dtype=np.float64)
     if len(boxes) == 0:
         return []
     has_score = boxes.shape[1] >= 5
+    scores = boxes[:, 4] if has_score else np.zeros(len(boxes))
 
     x1 = boxes[:, 0]; y1 = boxes[:, 1]
     x2 = boxes[:, 2]; y2 = boxes[:, 3]
-    area = (x2 - x1 + 1) * (y2 - y1 + 1)
-    # Highest score first (last in idxs). Fall back to y2 ordering when no
-    # score is provided.
-    idxs = np.argsort(boxes[:, 4]) if has_score else np.argsort(y2)
+    areas = (x2 - x1 + 1) * (y2 - y1 + 1)
 
-    pick = []
-    while len(idxs) > 0:
-        last = len(idxs) - 1
-        i = idxs[last]
-        pick.append(i)
+    order = np.argsort(-scores) if has_score else np.argsort(y2)
+    used = np.zeros(len(boxes), dtype=bool)
 
-        xx1 = np.maximum(x1[i], x1[idxs[:last]])
-        yy1 = np.maximum(y1[i], y1[idxs[:last]])
-        xx2 = np.minimum(x2[i], x2[idxs[:last]])
-        yy2 = np.minimum(y2[i], y2[idxs[:last]])
-        w = np.maximum(0, xx2 - xx1 + 1)
-        h = np.maximum(0, yy2 - yy1 + 1)
-        overlap = (w * h) / area[idxs[:last]]
-        idxs = np.delete(idxs, np.concatenate(
-            ([last], np.where(overlap > threshold)[0])))
+    out = []
+    for idx in order:
+        if used[idx]:
+            continue
+        remaining = np.where(~used)[0]
+        xx1 = np.maximum(x1[idx], x1[remaining])
+        yy1 = np.maximum(y1[idx], y1[remaining])
+        xx2 = np.minimum(x2[idx], x2[remaining])
+        yy2 = np.minimum(y2[idx], y2[remaining])
+        w = np.maximum(0.0, xx2 - xx1 + 1)
+        h = np.maximum(0.0, yy2 - yy1 + 1)
+        inter = w * h
+        union = areas[idx] + areas[remaining] - inter
+        iou = np.where(union > 0, inter / union, 0.0)
+        min_area = np.minimum(areas[idx], areas[remaining])
+        iom = np.where(min_area > 0, inter / min_area, 0.0)
 
-    out = boxes[pick]
+        if metric == "iou":
+            fuse = iou > threshold
+        elif metric == "iom":
+            fuse = iom > threshold
+        else:  # hybrid
+            fuse = (iou > threshold) | (iom > iom_threshold)
+
+        cluster = remaining[fuse]
+        used[cluster] = True
+
+        if mode == "weighted" and has_score and len(cluster) > 0:
+            s = scores[cluster]
+            wn = s / s.sum() if s.sum() > 0 else np.full_like(s, 1.0 / len(s))
+            cx1 = float((wn * x1[cluster]).sum())
+            cy1 = float((wn * y1[cluster]).sum())
+            cx2 = float((wn * x2[cluster]).sum())
+            cy2 = float((wn * y2[cluster]).sum())
+            cs  = float(s.max())
+            out.append((cx1, cy1, cx2, cy2, cs))
+        else:
+            out.append(tuple(boxes[idx]))
+
+    arr = np.asarray(out, dtype=np.float64)
     if has_score:
-        # Coords as int, score as float — convert manually since astype('int')
-        # would truncate the score column.
-        return np.column_stack([out[:, :4].astype(int), out[:, 4]])
-    return out.astype(int)
+        return np.column_stack([arr[:, :4].astype(int), arr[:, 4]])
+    return arr[:, :4].astype(int)

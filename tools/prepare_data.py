@@ -59,6 +59,35 @@ def _to_gray(pil_img: Image.Image, resolution: int) -> np.ndarray:
     return np.asarray(pil_img, dtype=np.uint8)
 
 
+def jitter_crops(faces_big: np.ndarray, target_res: int, max_shift: int,
+                 rng: np.random.Generator) -> np.ndarray:
+    """Generate `2 * N` crops at `target_res` from `faces_big` (gathered at
+    `target_res + 2*max_shift`). The first N crops are the centered crop;
+    the next N are random shifts in `[0, 2*max_shift]` per axis, per face.
+
+    The resulting array doubles the unique-face count without breaking the
+    pixel-aligned face structure that V-J relies on at small resolutions —
+    a 1-2 px shift on a 24×24 face is geometrically plausible (camera
+    jitter, alignment slack) and stays within the same Haar-feature
+    sub-grid.
+    """
+    n, big, _ = faces_big.shape
+    assert big == target_res + 2 * max_shift, (
+        f"jitter_crops expects faces of size {target_res + 2*max_shift}, "
+        f"got {big}")
+    out = np.empty((2 * n, target_res, target_res), dtype=faces_big.dtype)
+    # Variant 0: center crop
+    c = max_shift
+    out[:n] = faces_big[:, c:c + target_res, c:c + target_res]
+    # Variant 1: per-face random shift
+    dxs = rng.integers(0, 2 * max_shift + 1, size=n)
+    dys = rng.integers(0, 2 * max_shift + 1, size=n)
+    for i in range(n):
+        dx, dy = int(dxs[i]), int(dys[i])
+        out[n + i] = faces_big[i, dy:dy + target_res, dx:dx + target_res]
+    return out
+
+
 def gather_faces(ds_train, source: str, resolution: int, n_faces: int,
                  rng: np.random.Generator) -> np.ndarray:
     """Filter train split by source AND label==1, sample n_faces, return (N, res, res) uint8.
@@ -170,10 +199,16 @@ def main():
     ap = argparse.ArgumentParser(
         description=__doc__,
         formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--face-source", choices=["celeba", "fddb", "cbcl"], default="celeba",
-                    help="Face dataset to train on (default: celeba). "
-                         "Use 'cbcl' for matched-domain training when evaluating "
-                         "on the CBCL benchmark (~6977 faces available).")
+    ap.add_argument("--face-source", default="celeba",
+                    help="Face dataset(s) to train on. Single source: "
+                         "'celeba', 'fddb', or 'cbcl'. Multi-source: '+'-separated, "
+                         "e.g. 'celeba+cbcl' to combine 10K CelebA + 2.4K CBCL "
+                         "for matched alignment + diverse identities at 24×24 "
+                         "(at this resolution CelebA's looser framing is "
+                         "absorbed by the 5px slack from 19×19, so the CelebA "
+                         "→CBCL alignment failure of 19×19 doesn't apply). "
+                         "`--n-faces` is the per-source cap; the sum is used. "
+                         "(default: celeba)")
     ap.add_argument("--n-faces", type=int, default=DEFAULT_N_FACES,
                     help=f"Faces to sample from source (default: {DEFAULT_N_FACES:,}).")
     ap.add_argument("--resolution", type=int, default=DEFAULT_RESOLUTION,
@@ -184,6 +219,14 @@ def main():
                     help=f"Val fraction; test = 1 - train - val (default: {DEFAULT_VAL_FRAC}).")
     ap.add_argument("--augment", action="store_true",
                     help="Add horizontal-flip mirrors to training positives only.")
+    ap.add_argument("--jitter", type=int, default=0,
+                    help="Shift-jitter augmentation: max pixel shift (default: 0 "
+                         "= disabled). When > 0, faces are gathered at "
+                         "(resolution + 2*jitter) and each one yields TWO crops: "
+                         "a center crop and one with a random ±jitter-px offset. "
+                         "Doubles unique-face count while preserving pixel "
+                         "alignment, which is critical for V-J at small "
+                         "resolutions (see README on alignment).")
     ap.add_argument("--pool-size", type=int, default=DEFAULT_POOL_SIZE,
                     help=f"Caltech patches to extract (default: {DEFAULT_POOL_SIZE:,}).")
     ap.add_argument("--patches-per-image", type=int, default=DEFAULT_PATCHES_PER_IMAGE,
@@ -214,6 +257,15 @@ def main():
         ap.error(f"train_frac + val_frac must be < 1 "
                  f"(got {args.train_frac + args.val_frac}).")
 
+    # Parse multi-source spec (e.g. 'celeba+cbcl' → ['celeba', 'cbcl'])
+    valid_sources = {"celeba", "fddb", "cbcl"}
+    face_sources = [s.strip() for s in args.face_source.split("+") if s.strip()]
+    bad = [s for s in face_sources if s not in valid_sources]
+    if bad:
+        ap.error(f"unknown face source(s): {bad}. valid: {sorted(valid_sources)}")
+    if not face_sources:
+        ap.error("--face-source must list at least one source")
+
     rng = np.random.default_rng(args.seed)
     out_dir = args.out_dir or DEFAULT_OUT_BASE / str(args.resolution)
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -222,22 +274,55 @@ def main():
     print(f"   face_source={args.face_source}  neg_source={args.neg_source}  "
           f"n_faces={args.n_faces:,}  "
           f"split={args.train_frac:.2f}/{args.val_frac:.2f}/{test_frac:.2f}  "
-          f"augment={args.augment}")
+          f"augment={args.augment}  jitter={args.jitter}")
     print(f"   HF repo: {args.repo_id}")
 
     # ---- Load HF dataset (downloads on first call, cached afterwards) ----
     ds = load_dataset(args.repo_id)
     print(f"\nLoaded HF dataset:  {dict({s: len(ds[s]) for s in ds})}")
 
-    # ---- Faces: filter, sample, resize, split ----
-    faces = gather_faces(ds["train"], args.face_source, args.resolution,
-                         args.n_faces, rng)
-    n = len(faces)
+    # ---- Faces: gather unique → split → jitter per split ----
+    # IMPORTANT: split on UNIQUE-face indices, not on post-jitter copies.
+    # If we jittered first and split second, the same face could end up in
+    # both train (centered crop) and val (shifted crop), leaking labels.
+    if args.jitter > 0:
+        gather_res = args.resolution + 2 * args.jitter
+        print(f"Jitter active: gathering at {gather_res}×{gather_res}, will "
+              f"yield 2 crops per face at {args.resolution}×{args.resolution}")
+    else:
+        gather_res = args.resolution
+
+    # Multi-source: gather independently from each, then concatenate. Each
+    # source gets up to `--n-faces`; total = sum (capped by availability).
+    parts = []
+    for src in face_sources:
+        arr = gather_faces(ds["train"], src, gather_res, args.n_faces, rng)
+        print(f"   {src}: {len(arr):,} faces gathered")
+        parts.append(arr)
+    faces_unique = np.concatenate(parts, axis=0) if len(parts) > 1 else parts[0]
+    if len(face_sources) > 1:
+        # Shuffle so split is balanced across sources, not "all-celeba then all-cbcl"
+        perm = rng.permutation(len(faces_unique))
+        faces_unique = faces_unique[perm]
+        print(f"   combined+shuffled: {len(faces_unique):,} faces "
+              f"from {len(face_sources)} sources")
+    n = len(faces_unique)
     train_idx, val_idx, test_idx = split_three_way(
         n, args.train_frac, args.val_frac, rng)
-    train_pos = faces[train_idx]
-    val_pos   = faces[val_idx]
-    test_pos  = faces[test_idx]
+
+    if args.jitter > 0:
+        train_pos = jitter_crops(faces_unique[train_idx], args.resolution,
+                                 args.jitter, rng)
+        val_pos   = jitter_crops(faces_unique[val_idx],   args.resolution,
+                                 args.jitter, rng)
+        test_pos  = jitter_crops(faces_unique[test_idx],  args.resolution,
+                                 args.jitter, rng)
+        print(f"   shift-jitter expansion: train {len(train_idx):,} → "
+              f"{len(train_pos):,}, val {len(val_idx):,} → {len(val_pos):,}")
+    else:
+        train_pos = faces_unique[train_idx]
+        val_pos   = faces_unique[val_idx]
+        test_pos  = faces_unique[test_idx]
 
     if args.augment:
         train_pos = np.concatenate([train_pos, train_pos[:, :, ::-1]], axis=0)
@@ -302,12 +387,14 @@ def main():
         "resolution": args.resolution,
         "seed": args.seed,
         "face_source": args.face_source,
+        "face_sources_parsed": face_sources,
         "neg_source": args.neg_source,
         "n_faces_sampled": int(n),
         "train_frac": args.train_frac,
         "val_frac": args.val_frac,
         "test_frac": test_frac,
         "augment": bool(args.augment),
+        "jitter": int(args.jitter),
         "repo_id": args.repo_id,
         "counts": {
             "train_pos":      int(len(train_pos)),

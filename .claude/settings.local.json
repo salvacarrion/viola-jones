@@ -1,0 +1,20 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python -c \"import ast; ast.parse\\(open\\('tools/prepare_data.py'\\).read\\(\\)\\)\")",
+      "Bash(python tools/prepare_data.py --help)",
+      "Bash(python3 -c ' *)",
+      "Bash(/Users/salvacarrion/.local/share/uv/python/cpython-3.12.9-macos-aarch64-none/bin/python3 -c \"import numpy; print\\('ok'\\)\")",
+      "Bash(uv run *)",
+      "Bash(conda run *)",
+      "Bash(/opt/homebrew/bin/python3 -c \"import numpy; print\\('ok'\\)\")",
+      "Bash(pip3 install *)",
+      "Bash(python3 -c \"import numpy; print\\('ok'\\)\")",
+      "Bash(/opt/homebrew/bin/python3 -c ' *)",
+      "Bash(/opt/homebrew/bin/python3 -c \"import sys; print\\(sys.path\\)\")",
+      "Bash(xargs -I{} ls {})",
+      "Bash(python3 -c \"import ast; ast.parse\\(open\\('violajones.py'\\).read\\(\\)\\); print\\('violajones.py OK'\\)\")",
+      "Bash(python3 -c \"import ast; ast.parse\\(open\\('main.py'\\).read\\(\\)\\); print\\('main.py OK'\\)\")"
+    ]
+  }
+}
