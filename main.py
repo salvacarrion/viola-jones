@@ -36,12 +36,16 @@ def _load_data(data_dir):
     # Optional matched-domain seed (`prepare_data.py --neg-source cbcl|mixed`).
     seed_path = os.path.join(data_dir, "cbcl_neg_seed.npy")
     bundles["cbcl_neg_seed"] = np.load(seed_path) if os.path.exists(seed_path) else None
+    val_cbcl_path = os.path.join(data_dir, "val_cbcl_pos.npy")
+    bundles["val_cbcl_pos"] = np.load(val_cbcl_path) if os.path.exists(val_cbcl_path) else None
     return bundles
 
 
-def train(data_dir, layers, layer_recall=0.99,
+def train(data_dir, layer_recall=0.99,
           target_neg_per_stage=3000, neg_sample_budget=100000,
-          weights_dir="weights", seed=42):
+          weights_dir="weights", seed=42, target_stage_fpr=None,
+          max_stages=30, max_wcs_per_stage=500, min_cascade_recall=0.80,
+          resume_from=None):
     bundles = _load_data(data_dir)
     train_pos = bundles["train_pos"]
     val_pos = bundles["val_pos"]
@@ -55,6 +59,9 @@ def train(data_dir, layers, layer_recall=0.99,
     if seed_neg_pool is not None:
         print(f"\t- cbcl_neg_seed: {len(seed_neg_pool):,}  "
               f"(matched-domain stage-1 seed)")
+    val_cal_pos = bundles.get("val_cbcl_pos")
+    if val_cal_pos is not None:
+        print(f"\t- val_cbcl_pos:  {len(val_cal_pos):,}  (CBCL-only calibration subset)")
 
     # Per-resolution feature cache (reused on subsequent runs at same res).
     cache_dir = os.path.join(str(data_dir), "_cache") + os.sep
@@ -71,10 +78,31 @@ def train(data_dir, layers, layer_recall=0.99,
     out_path = os.path.join(weights_subdir, f"cvj_weights_{int(time.time())}")
 
     print("\nTraining Viola-Jones...")
-    clf = ViolaJones(layers=layers, features_path=cache_dir,
-                     layer_recall=layer_recall, base_size=res)
+    if resume_from is not None:
+        print(f"Resuming from checkpoint: {resume_from}")
+        clf = ViolaJones.load(resume_from)
+        assert clf.base_width == res and clf.base_height == res, (
+            f"Checkpoint resolution {clf.base_width}×{clf.base_height} "
+            f"does not match data resolution {res}×{res}.")
+        print(f"\t- loaded {len(clf.clfs)} trained stage(s) — will continue from stage {len(clf.clfs) + 1}")
+        # Patch training config with current CLI args so the resumed run
+        # uses the same hyperparameters as if it had never been interrupted.
+        clf.features_path      = cache_dir
+        clf.layer_recall       = layer_recall
+        clf.target_stage_fpr   = target_stage_fpr
+        clf.max_stages         = max_stages
+        clf.max_wcs_per_stage  = max_wcs_per_stage
+        clf.min_cascade_recall = min_cascade_recall
+    else:
+        clf = ViolaJones(features_path=cache_dir,
+                         layer_recall=layer_recall, base_size=res,
+                         target_stage_fpr=target_stage_fpr,
+                         max_stages=max_stages,
+                         max_wcs_per_stage=max_wcs_per_stage,
+                         min_cascade_recall=min_cascade_recall)
     clf.train(train_pos, val_pos, neg_pool,
               seed_neg_pool=seed_neg_pool,
+              val_cal_pos=val_cal_pos,
               target_neg_per_stage=target_neg_per_stage,
               neg_sample_budget=neg_sample_budget,
               seed=seed,
@@ -173,11 +201,18 @@ if __name__ == "__main__":
                         help="Checkpoint to load; omit to auto-pick the most recent one")
 
     # Train
-    parser.add_argument("--layers", type=int, nargs="+", default=[5, 20, 50, 100],
-                        metavar="T",
-                        help="Weak learners per cascade stage (default: 5 20 50 100). "
-                             "Stage 1 must be >=~3 — with T=1 the layer's score is "
-                             "binary so 99%% recall calibration drops the threshold to 0.")
+    parser.add_argument("--max-stages", type=int, default=30,
+                        help="Hard cap on cascade depth (default: 30). Training stops "
+                             "earlier if cumulative val recall drops below "
+                             "--min-cascade-recall or the negative pool is exhausted.")
+    parser.add_argument("--max-wcs-per-stage", type=int, default=500,
+                        help="Max weak classifiers per stage (default: 500). With "
+                             "--target-stage-fpr, stages stop earlier when the FPR "
+                             "target is met — this is only the hard upper bound.")
+    parser.add_argument("--min-cascade-recall", type=float, default=0.80,
+                        help="Stop adding stages when cumulative val-pos recall drops "
+                             "below this (default: 0.80). Prevents deep cascades from "
+                             "trading too much recall for marginal specificity gains.")
     parser.add_argument("--layer-recall", type=float, default=0.99,
                         help="Per-stage face-recall target (default: 0.99)")
     parser.add_argument("--target-neg-per-stage", type=int, default=3000,
@@ -185,6 +220,16 @@ if __name__ == "__main__":
     parser.add_argument("--neg-sample-budget", type=int, default=100000,
                         help="Max patches sampled per stage when mining (default: 100000)")
     parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument("--resume-from", default=None, metavar="PKL",
+                        help="Path to a .pkl checkpoint to resume training from. "
+                             "Loads the partial cascade and continues from the next "
+                             "stage. All other training args (--max-wcs-per-stage, "
+                             "--target-stage-fpr, etc.) are applied to the resumed run.")
+    parser.add_argument("--target-stage-fpr", type=float, default=0.5,
+                        help="Per-stage FPR target for adaptive training (paper §3). "
+                             "Each stage stops adding weak classifiers once training-"
+                             "negative FPR drops to this value (default: 0.5). "
+                             "Set to 0.0 to disable adaptive mode (fixed-T = --max-wcs-per-stage).")
 
     # Detect
     parser.add_argument("--detect-images", nargs="+",
@@ -228,11 +273,17 @@ if __name__ == "__main__":
     print(f"Starting (mode={args.mode})...")
 
     if args.mode == "train":
-        train(args.data_dir, args.layers,
+        tgt_fpr = args.target_stage_fpr if args.target_stage_fpr > 0.0 else None
+        train(args.data_dir,
               layer_recall=args.layer_recall,
               target_neg_per_stage=args.target_neg_per_stage,
               neg_sample_budget=args.neg_sample_budget,
-              seed=args.seed)
+              seed=args.seed,
+              target_stage_fpr=tgt_fpr,
+              max_stages=args.max_stages,
+              max_wcs_per_stage=args.max_wcs_per_stage,
+              min_cascade_recall=args.min_cascade_recall,
+              resume_from=args.resume_from)
     elif args.mode == "test":
         test(args.weights_path, args.data_dir)
     elif args.mode == "detect":

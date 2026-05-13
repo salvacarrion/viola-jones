@@ -295,20 +295,25 @@ def main():
     # Multi-source: gather independently from each, then concatenate. Each
     # source gets up to `--n-faces`; total = sum (capped by availability).
     parts = []
-    for src in face_sources:
+    source_ids_parts = []
+    for src_i, src in enumerate(face_sources):
         arr = gather_faces(ds["train"], src, gather_res, args.n_faces, rng)
         print(f"   {src}: {len(arr):,} faces gathered")
         parts.append(arr)
+        source_ids_parts.append(np.full(len(arr), src_i, dtype=np.int32))
     faces_unique = np.concatenate(parts, axis=0) if len(parts) > 1 else parts[0]
+    source_ids = np.concatenate(source_ids_parts) if len(source_ids_parts) > 1 else source_ids_parts[0]
     if len(face_sources) > 1:
         # Shuffle so split is balanced across sources, not "all-celeba then all-cbcl"
         perm = rng.permutation(len(faces_unique))
         faces_unique = faces_unique[perm]
+        source_ids = source_ids[perm]
         print(f"   combined+shuffled: {len(faces_unique):,} faces "
               f"from {len(face_sources)} sources")
     n = len(faces_unique)
     train_idx, val_idx, test_idx = split_three_way(
         n, args.train_frac, args.val_frac, rng)
+    val_source_ids = source_ids[val_idx]
 
     if args.jitter > 0:
         train_pos = jitter_crops(faces_unique[train_idx], args.resolution,
@@ -334,6 +339,25 @@ def main():
         val_pos   = np.concatenate([val_pos,   val_pos[:, :, ::-1]],   axis=0)
         print(f"   Augmented train_pos with h-flips → {len(train_pos):,}")
         print(f"   Augmented val_pos   with h-flips → {len(val_pos):,}")
+
+    # ---- Val calibration subset (multi-source with CBCL only) ----
+    # When training celeba+cbcl, calibrate() must see only CBCL val faces so
+    # that CelebA outliers (lower scores due to alignment gap) don't drag every
+    # stage's threshold down, which opens the gate for non-faces at test time.
+    val_cbcl_pos = None
+    if 'cbcl' in face_sources and len(face_sources) > 1:
+        cbcl_src_idx = face_sources.index('cbcl')
+        cbcl_in_val = (val_source_ids == cbcl_src_idx)
+        val_unique_cbcl = faces_unique[val_idx][cbcl_in_val]
+        if len(val_unique_cbcl) > 0:
+            if args.jitter > 0:
+                val_cbcl_pos = jitter_crops(val_unique_cbcl, args.resolution,
+                                            args.jitter, rng)
+            else:
+                val_cbcl_pos = val_unique_cbcl.copy()
+            if args.augment:
+                val_cbcl_pos = np.concatenate([val_cbcl_pos, val_cbcl_pos[:, :, ::-1]])
+            print(f"   val_cbcl_pos: {len(val_cbcl_pos):,} (CBCL-only calibration subset)")
 
     # ---- Negative pool(s) ----
     # `caltech_pool.npy` is the canonical mining pool (main.py expects this name).
@@ -379,6 +403,11 @@ def main():
         # Stale seed from a previous --neg-source run would silently bias
         # training; remove it when this run doesn't produce one.
         cbcl_seed_path.unlink()
+    val_cbcl_path = out_dir / "val_cbcl_pos.npy"
+    if val_cbcl_pos is not None:
+        np.save(val_cbcl_path, val_cbcl_pos)
+    elif val_cbcl_path.exists():
+        val_cbcl_path.unlink()
     if cbcl_pos is not None:
         np.save(out_dir / "cbcl_test_pos.npy", cbcl_pos)
         np.save(out_dir / "cbcl_test_neg.npy", cbcl_neg)
@@ -402,6 +431,7 @@ def main():
             "test_pos":       int(len(test_pos)),
             "caltech_pool":   int(len(caltech_pool)),
             "cbcl_neg_seed":  int(len(cbcl_neg_seed)) if cbcl_neg_seed is not None else 0,
+            "val_cbcl_pos":   int(len(val_cbcl_pos))  if val_cbcl_pos  is not None else 0,
             "cbcl_test_pos":  int(len(cbcl_pos)) if cbcl_pos is not None else 0,
             "cbcl_test_neg":  int(len(cbcl_neg)) if cbcl_neg is not None else 0,
         },

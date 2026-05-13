@@ -111,10 +111,10 @@ data/19/
 
 ### 2. Train
 
-Quick recipe (matches the prepare data above):
+Quick recipe (matches the prepare data above, ~30 min on M1):
 
 ```bash
-python main.py train --data-dir data/19 --layers 5 20 50 100
+python main.py train --data-dir data/19 --max-stages 6 --max-wcs-per-stage 100
 ```
 
 Production recipe (deep cascade + bigger neg budget):
@@ -122,16 +122,32 @@ Production recipe (deep cascade + bigger neg budget):
 ```bash
 python main.py train \
     --data-dir data/24 \
-    --layers 5 10 20 40 60 80 100 130 160 \
+    --max-stages 30 \
+    --max-wcs-per-stage 200 \
+    --target-stage-fpr 0.3 \
+    --min-cascade-recall 0.80 \
     --target-neg-per-stage 5000 \
     --neg-sample-budget 1000000
 ```
 
+**The cascade is adaptive** — neither the number of stages nor the
+weak-classifier count per stage is fixed in advance:
+
+- Each stage stops adding weak classifiers when training-negative FPR
+  drops below `--target-stage-fpr` (paper §3, default `0.5`).
+- The cascade stops adding stages when cumulative val-pos recall drops
+  below `--min-cascade-recall`, when mining returns 0 hard negatives, or
+  when `--max-stages` is reached.
+- `--max-wcs-per-stage` is a per-stage hard cap, not a target.
+
 Auto-loads `cbcl_neg_seed.npy` if present and uses it for the stage-1
-seed AND for stratified mining at every later stage. Saves the cascade
-to `weights/<resolution>/cvj_weights_<unix-ts>.pkl`. **Per-stage
+seed AND for stratified mining at every later stage. Also auto-loads
+`val_cbcl_pos.npy` (multi-source only) and uses it for calibration so
+CelebA outliers don't drag thresholds toward zero. Saves the cascade to
+`weights/<resolution>/cvj_weights_<unix-ts>.pkl`. **Per-stage
 checkpointing is on**: each completed stage overwrites the same `.pkl`,
-so a crash mid-run leaves a usable partial cascade.
+so a crash mid-run leaves a usable partial cascade — and `--resume-from
+<pkl>` continues training from the last saved stage.
 
 ### 2b. Tune thresholds post-hoc (optional)
 
@@ -212,13 +228,17 @@ python tools/inspect_dataset.py
 
 **`main.py train`**:
 
-| Flag                     | Default       | Description                                                                      |
-| ------------------------ | ------------- | -------------------------------------------------------------------------------- |
-| `--data-dir`             | `data/24`     | Directory with NPY bundles from `prepare_data.py`                                |
-| `--layers T [T ...]`     | `5 20 50 100` | Weak learners per cascade stage                                                  |
-| `--layer-recall`         | `0.99`        | Per-stage face-recall target; cumulative recall ≈ `layer-recall ^ N`             |
-| `--target-neg-per-stage` | `3000`        | Negatives mined per stage (split 50/50 across pools when `seed_neg_pool` exists) |
-| `--neg-sample-budget`    | `100000`      | Max patches scanned during mining per stage                                      |
+| Flag                     | Default   | Description                                                                                        |
+| ------------------------ | --------- | -------------------------------------------------------------------------------------------------- |
+| `--data-dir`             | `data/24` | Directory with NPY bundles from `prepare_data.py`                                                  |
+| `--max-stages`           | `30`      | Hard cap on cascade depth. Training stops earlier on `--min-cascade-recall` or pool exhaustion.    |
+| `--max-wcs-per-stage`    | `500`     | Per-stage hard cap on weak classifiers. Stages stop earlier via `--target-stage-fpr`.              |
+| `--target-stage-fpr`     | `0.5`     | Per-stage FPR target (paper §3). Stage stops when training-neg FPR drops to this. `0.0` = fixed-T. |
+| `--min-cascade-recall`   | `0.80`    | Stop adding stages when cumulative val-pos recall drops below this.                                |
+| `--layer-recall`         | `0.99`    | Per-stage face-recall target for calibration; cumulative recall ≈ `layer-recall ^ N`               |
+| `--target-neg-per-stage` | `3000`    | Negatives mined per stage (split 50/50 across pools when `seed_neg_pool` exists)                   |
+| `--neg-sample-budget`    | `100000`  | Max patches scanned during mining per stage                                                        |
+| `--resume-from PKL`      | off       | Resume from a checkpoint. Loads its stages, re-mines negatives, continues. CLI args apply.         |
 
 **`main.py detect`**:
 
@@ -231,19 +251,27 @@ python tools/inspect_dataset.py
 | `--nms-mode`              | `weighted`       | `weighted` fuses overlapping boxes by score-weighted average; `greedy` keeps highest-score, drops rest.            |
 | `--nms-metric`            | `hybrid`         | `hybrid` fuses if IoU > threshold OR IoMin > 0.7. `iou` is standard NMS. `iom` is intersection-over-min-area only. |
 
-**Cost notes** (single-threaded Python on a MacBook Pro M1):
+**Cost notes** (single-threaded Python on a MacBook Pro M1). These are
+historical fixed-`--layers` runs from before the adaptive cascade was
+implemented; with the current code, total cascade depth and per-stage
+weak-classifier counts emerge from `--target-stage-fpr` and
+`--min-cascade-recall`, so totals vary run to run.
 
-| Recipe                        | Resolution | Positives | Layers (Σ WCs)                         | Time         |
-| ----------------------------- | ---------- | --------- | -------------------------------------- | ------------ |
-| Quick (CBCL only)             | 19×19      | ~3.9 K    | 5 20 50 100 (175)                      | ~15 min      |
-| 24×24 smoke                   | 24×24      | ~7.8 K    | 5 10 20 30 (65)                        | ~50 min      |
-| 24×24 deep, single source     | 24×24      | ~7.8 K    | 5 10 20 40 60 80 100 (315)             | ~6 h         |
-| **Production (multi-source)** | **24×24**  | **~50 K** | **5 10 20 40 60 80 100 130 160 (615)** | **~10-12 h** |
+| Recipe (historical fixed-layers) | Resolution | Positives | Σ WCs   | Time         |
+| -------------------------------- | ---------- | --------- | ------- | ------------ |
+| Quick (CBCL only, 4 stages)      | 19×19      | ~3.9 K    | 175     | ~15 min      |
+| 24×24 smoke (4 stages)           | 24×24      | ~7.8 K    | 65      | ~50 min      |
+| 24×24 deep, single source        | 24×24      | ~7.8 K    | 315     | ~6 h         |
+| **Production (multi-source)**    | **24×24**  | **~50 K** | **615** | **~10-12 h** |
 
-Training scales roughly linearly in `n_train_pos × n_features × Σ
-LAYERS`, plus mining overhead that grows in deep stages (cascade rejects
-more, so finding hard negatives requires scanning more of the pool —
-hence the larger `--neg-sample-budget 1000000` in the production recipe).
+Training scales roughly linearly in `n_train_pos × n_features × Σ WCs`,
+plus mining overhead that grows in deep stages (cascade rejects more, so
+finding hard negatives requires scanning more of the pool — hence the
+larger `--neg-sample-budget 1000000` in the production recipe). With
+adaptive training, early stages typically use far fewer WCs than fixed
+runs would have given them (FPR target hit in 1-5 rounds when training
+negatives are still easy), while late stages may approach
+`--max-wcs-per-stage`.
 
 ## Results
 
@@ -324,7 +352,7 @@ CBCL non-faces "face".
   pixel statistics. Caltech-trained cascades have never seen anything
   remotely close, so they let them through.
 
-**Fix** (`--neg-source mixed`): pull the ≈ 4 500 CBCL non-faces from
+**Fix** (`--neg-source mixed`): pull the ≈ 4500 CBCL non-faces from
 the HF train split (×2 with h-flip → 9 096), and use them as the
 **stage-1 seed**. [violajones.py](violajones.py) accepts an optional
 `seed_neg_pool` arg that biases stage-1 sampling toward this
@@ -452,10 +480,14 @@ python tools/prepare_data.py \
     --augment \
     --jitter 2
 
-# 2) Train deep cascade (per-stage checkpoint on by default)
+# 2) Train deep cascade (adaptive depth + adaptive per-stage size;
+#    per-stage checkpoint is on by default — resume with --resume-from)
 python main.py train \
     --data-dir data/24 \
-    --layers 5 10 20 40 60 80 100 130 160 \
+    --max-stages 30 \
+    --max-wcs-per-stage 200 \
+    --target-stage-fpr 0.3 \
+    --min-cascade-recall 0.80 \
     --target-neg-per-stage 5000 \
     --neg-sample-budget 1000000
 
@@ -489,10 +521,22 @@ python main.py detect \
 
 If training is interrupted, the most recent `weights/24/cvj_weights_<ts>.pkl`
 is a fully usable partial cascade — testing and detect work against
-however many stages had completed. Resume = re-run step 2 from scratch
-(no per-stage warm-start; AdaBoost weights aren't cleanly resumable),
-which is fine because per-stage checkpoints already protect you against
-catastrophic loss.
+however many stages had completed. To continue training from there,
+re-run step 2 with `--resume-from`:
+
+```bash
+python main.py train \
+    --data-dir data/24 \
+    --resume-from $(ls -t weights/24/cvj_weights_*.pkl | head -1) \
+    --max-stages 30 --max-wcs-per-stage 200 \
+    --target-stage-fpr 0.3 --min-cascade-recall 0.80 \
+    --target-neg-per-stage 5000 --neg-sample-budget 1000000
+```
+
+The trained stages are loaded as-is; hard negatives for the next
+unfinished stage are re-mined fresh. The RNG state is not preserved, so
+results will be very close but not bit-identical to an uninterrupted
+run.
 
 ## Example detections
 

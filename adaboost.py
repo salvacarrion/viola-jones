@@ -20,7 +20,7 @@ class AdaBoost:
     # [OPT] feature_chunk=500 (was 2000): caps per-batch intermediates in
     # _best_stump at ~0.75 GB instead of ~3 GB. Bit-identical results;
     # slightly more loop iterations but much less memory pressure.
-    def train(self, X, y, features, feature_chunk=500):
+    def train(self, X, y, features, feature_chunk=500, target_stage_fpr=None):
         """
         Boost `n_estimators` decision-stump rounds.
 
@@ -52,6 +52,13 @@ class AdaBoost:
 
         # Initial weights: balanced between classes (Viola-Jones §3, eq. 1).
         weights = np.where(y == 1, 0.5 / pos_num, 0.5 / neg_num).astype(np.float32)
+
+        # Adaptive FPR mode: accumulate weighted negative scores to check when
+        # the stage rejects enough training negatives at threshold=0.5.
+        neg_mask = (y == 0)
+        if target_stage_fpr is not None:
+            running_neg_scores = np.zeros(int(neg_mask.sum()), dtype=np.float64)
+            sum_alpha_fpr = 0.0
 
         start_time = time.time()
         pbar = tqdm(range(self.n_estimators), desc='Boosting rounds',
@@ -90,7 +97,19 @@ class AdaBoost:
                                  threshold=float(thr), polarity=int(pol))
             self.alphas.append(float(alpha))
             self.clfs.append(clf)
-            pbar.set_postfix(err='{:.4f}'.format(err), alpha='{:.3f}'.format(alpha))
+            if target_stage_fpr is not None:
+                running_neg_scores += alpha * preds[neg_mask]
+                sum_alpha_fpr += alpha
+                fpr = float((running_neg_scores / sum_alpha_fpr >= 0.5).mean())
+                pbar.set_postfix(err='{:.4f}'.format(err), alpha='{:.3f}'.format(alpha),
+                                 fpr='{:.3f}'.format(fpr))
+                if fpr <= target_stage_fpr:
+                    pbar.write("[AdaBoost] FPR {:.3f} ≤ {:.3f}; early stop at "
+                               "round {}/{}".format(fpr, target_stage_fpr,
+                                                    t + 1, self.n_estimators))
+                    break
+            else:
+                pbar.set_postfix(err='{:.4f}'.format(err), alpha='{:.3f}'.format(alpha))
 
         print("\t- AdaBoost stage: {} weak classifiers in {}".format(
             len(self.clfs), _fmt_time(start_time)))

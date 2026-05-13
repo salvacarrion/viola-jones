@@ -10,22 +10,33 @@ from adaboost import AdaBoost
 
 class ViolaJones:
 
-    def __init__(self, layers, features_path=None, layer_recall=0.99,
-                 base_size=19):
-        assert isinstance(layers, list)
-        self.layers = layers  # list with the number T of weak classifiers
+    def __init__(self, features_path=None, layer_recall=0.99,
+                 base_size=19, target_stage_fpr=None,
+                 max_stages=30, max_wcs_per_stage=500,
+                 min_cascade_recall=0.80):
         self.clfs = []
         # Native training-window size; sliding-window inference starts here
         # and grows by `base_scale`. Overwritten in `train()` based on the
         # actual training data shape so the saved checkpoint is self-describing.
         self.base_width = self.base_height = base_size
         self.base_scale, self.shift = 1.25, 2
-        self.features_path = features_path  # Path to save the features
+        self.features_path = features_path
         # Per-stage face-recall target used to calibrate each AdaBoost layer
         # after training. 0.99 ≈ paper-style; cumulative recall ≈ layer_recall^N.
         self.layer_recall = layer_recall
+        # Per-stage FPR target for adaptive training (paper §3). Each stage
+        # stops adding weak classifiers once training-negative FPR drops here.
+        # None = fixed-T mode (use exactly max_wcs_per_stage rounds per stage).
+        self.target_stage_fpr = target_stage_fpr
+        # Adaptive cascade depth: keep adding stages until cumulative val recall
+        # drops below min_cascade_recall, negatives are exhausted, or max_stages
+        # is reached. Number of stages emerges from training, not pre-specified.
+        self.max_stages = max_stages
+        self.max_wcs_per_stage = max_wcs_per_stage
+        self.min_cascade_recall = min_cascade_recall
 
     def train(self, train_pos, val_pos, neg_pool, seed_neg_pool=None,
+              val_cal_pos=None,
               target_neg_per_stage=3000, neg_sample_budget=100000, seed=42,
               checkpoint_path=None):
         """
@@ -81,6 +92,18 @@ class ViolaJones:
         X_pos_std = self._sample_stds(train_pos)
         X_val_pos_std = self._sample_stds(val_pos)
 
+        # Calibration positives: use CBCL-only val when training multi-source
+        # so CelebA outliers don't drag per-stage thresholds toward zero.
+        if val_cal_pos is not None and len(val_cal_pos) > 0:
+            print("Computing integral images for calibration val (CBCL-only)...")
+            print("\t- Calibration val: {:,} (CBCL-only, instead of mixed {:,})".format(
+                len(val_cal_pos), len(val_pos)))
+            X_cal_pos_ii  = np.array(list(map(integral_image, val_cal_pos)), dtype=np.uint32)
+            X_cal_pos_std = self._sample_stds(val_cal_pos)
+        else:
+            X_cal_pos_ii  = X_val_pos_ii
+            X_cal_pos_std = X_val_pos_std
+
         print("Building features...")
         start_time = time.time()
         features = build_features(img_w, img_h)
@@ -90,22 +113,36 @@ class ViolaJones:
         X_f_pos = self._apply_and_normalize(
             X_pos_ii, X_pos_std, features, cache_name="xf_pos")
 
-        # ---- Stage 1 negatives: random sample from the seed pool ----
-        # Prefer `seed_neg_pool` when provided so stage 1 sees the matched-
-        # domain distribution (e.g. CBCL non-faces) instead of broad Caltech
-        # patches; from stage 2 on, hard-neg mining still draws from `neg_pool`.
-        seed_src = seed_neg_pool if (seed_neg_pool is not None and
-                                     len(seed_neg_pool) > 0) else neg_pool
-        seed_label = "seed_neg_pool" if seed_src is seed_neg_pool else "neg_pool"
-        n_take = min(target_neg_per_stage, len(seed_src))
-        idxs = rng.choice(len(seed_src), size=n_take, replace=False)
-        current_negs_X = seed_src[idxs]
-        print("Stage 1 seed negatives: {:,} sampled from {}".format(n_take, seed_label))
+        # ---- Determine starting stage (fresh vs. resume) ----
+        # If self.clfs already has stages (loaded from a checkpoint), re-mine
+        # hard negatives for the next unfinished stage and skip the stages that
+        # are already trained. Otherwise, seed stage 1 from the matched-domain
+        # pool as usual.
+        start_stage = len(self.clfs)
+        if start_stage == 0:
+            seed_src = seed_neg_pool if (seed_neg_pool is not None and
+                                         len(seed_neg_pool) > 0) else neg_pool
+            seed_label = "seed_neg_pool" if seed_src is seed_neg_pool else "neg_pool"
+            n_take = min(target_neg_per_stage, len(seed_src))
+            idxs = rng.choice(len(seed_src), size=n_take, replace=False)
+            current_negs_X = seed_src[idxs]
+            print("Stage 1 seed negatives: {:,} sampled from {}".format(n_take, seed_label))
+        else:
+            print("Resuming training: {:,} stages already loaded — re-mining "
+                  "hard negatives for stage {:,}...".format(start_stage, start_stage + 1))
+            current_negs_X = self._mine_hard_negatives(
+                neg_pool, target_neg_per_stage, neg_sample_budget, rng,
+                seed_neg_pool=seed_neg_pool)
+            print("\t- {:,} hard negatives ready for stage {:,}".format(
+                len(current_negs_X), start_stage + 1))
 
         # ---- Cascade training ----
-        for stage_idx, T in enumerate(self.layers):
-            print("\n[CascadeClassifier] Stage {}/{} (T={})".format(
-                stage_idx + 1, len(self.layers), T))
+        max_stages = getattr(self, 'max_stages', 30)
+        max_wcs    = getattr(self, 'max_wcs_per_stage', 500)
+        min_recall = getattr(self, 'min_cascade_recall', 0.80)
+        for stage_idx in range(start_stage, max_stages):
+            print("\n[CascadeClassifier] Stage {}/≤{} (max_wcs={})".format(
+                stage_idx + 1, max_stages, max_wcs))
             if len(current_negs_X) == 0:
                 print("Cascade rejects all available negatives. Stopping early.")
                 break
@@ -138,10 +175,11 @@ class ViolaJones:
             # X_f_stage = X_f_stage[:, perm]
             # y_stage = y_stage[perm]
 
-            clf = AdaBoost(n_estimators=T)
-            clf.train(X_f_stage, y_stage, features)
+            clf = AdaBoost(n_estimators=max_wcs)
+            clf.train(X_f_stage, y_stage, features,
+                      target_stage_fpr=getattr(self, 'target_stage_fpr', None))
 
-            clf.calibrate(X_val_pos_ii, X_val_pos_std, target_recall=self.layer_recall)
+            clf.calibrate(X_cal_pos_ii, X_cal_pos_std, target_recall=self.layer_recall)
             print("\t- layer threshold (after calibrate): {:.4f}".format(clf.threshold))
             self.clfs.append(clf)
 
@@ -154,15 +192,28 @@ class ViolaJones:
             # in-progress operating point.
             if checkpoint_path is not None:
                 self.save(checkpoint_path)
-                print("\t- checkpoint -> {}.pkl  (stages {}/{})".format(
-                    checkpoint_path, stage_idx + 1, len(self.layers)))
+                print("\t- checkpoint -> {}.pkl  (stages {}/≤{})".format(
+                    checkpoint_path, stage_idx + 1, max_stages))
+
+            # ---- Global stopping: cumulative recall on val_pos ----
+            # Count how many val faces pass ALL trained stages so far. If it
+            # drops below min_cascade_recall, adding more stages would only
+            # hurt recall further without proportional FPR gain.
+            n_pass = sum(1 for ii, s in zip(X_val_pos_ii, X_val_pos_std)
+                         if self.classify_ii(ii, std=float(s)) == 1)
+            cum_recall = n_pass / len(val_pos)
+            print("\t- cumulative val recall: {:.4f}  (stop if < {})".format(
+                cum_recall, min_recall))
+            if cum_recall < min_recall:
+                print("\t! Recall {:.4f} < {}: stopping cascade.".format(
+                    cum_recall, min_recall))
+                break
 
             # ---- Mine negatives for the next stage ----
-            if stage_idx + 1 < len(self.layers):
-                current_negs_X = self._mine_hard_negatives(
-                    neg_pool, target_neg_per_stage, neg_sample_budget, rng,
-                    seed_neg_pool=seed_neg_pool)
-                print("\t- negatives carried to next layer: {}".format(len(current_negs_X)))
+            current_negs_X = self._mine_hard_negatives(
+                neg_pool, target_neg_per_stage, neg_sample_budget, rng,
+                seed_neg_pool=seed_neg_pool)
+            print("\t- negatives carried to next stage: {}".format(len(current_negs_X)))
 
     @staticmethod
     def _sample_stds(samples):
