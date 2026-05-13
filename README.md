@@ -24,19 +24,20 @@ stages, run NMS — gets you F1 ≈ 0.04 on the CBCL benchmark. Useless. The
 paper's F1 ≈ 0.85 came from millions of curated patches, 38 hand-tuned
 stages, and machine-time orders of magnitude beyond a laptop.
 
-This repo bridges the gap with **six small fixes**, each tied to a
+This repo bridges the gap with **seven small fixes**, each tied to a
 specific failure mode we hit while building it. The detailed write-ups
 live further down in the README; here is the narrative arc so you know
 why each flag exists:
 
-| #   | Failure mode observed                                                    | Fix (flag / file)                                          | Section                                                              |
-| --- | ------------------------------------------------------------------------ | ---------------------------------------------------------- | -------------------------------------------------------------------- |
-| 1   | Train on Caltech negatives → cascade calls 67 % of CBCL non-faces "face" | Matched-domain seed: `--neg-source mixed`                  | [Negative-domain gap](#1-negative-domain-gap)                        |
-| 2   | Stage 1 seed alone leaves stages 2–9 over-fit to Caltech                 | Stratified mining: stages 2+ also see CBCL non-faces       | [Stratified mining](#2-stratified-mining-not-just-stage-1)           |
-| 3   | 19×19 + CelebA → cascade collapses to 1.7 % recall                       | Train at 24×24 + shift-jitter: `--jitter 2`                | [Pixel alignment at small res](#3-pixel-alignment-at-low-resolution) |
-| 4   | 1 943 unique CBCL faces is too few for a 9-stage cascade                 | Multi-source: `--face-source celeba+cbcl`                  | [Why multi-source](#4-multi-source-positives)                        |
-| 5   | Calibration hits the 0.5 cap at deep stages → FPR stays high             | Allow per-stage threshold up to 0.95 (post-hoc + training) | [Calibration cap](#5-calibration-was-hitting-its-own-ceiling)        |
-| 6   | Same face fires at scales 1×, 1.5×, 2× → "boxes on boxes" after NMS      | Hybrid NMS: `--nms-metric hybrid` (IoU **or** IoMin)       | [Hybrid NMS](#6-hybrid-nms-for-multi-scale-duplicates)               |
+| #   | Failure mode observed                                                                  | Fix (flag / file)                                          | Section                                                              |
+| --- | -------------------------------------------------------------------------------------- | ---------------------------------------------------------- | -------------------------------------------------------------------- |
+| 1   | Train on Caltech negatives → cascade calls 67 % of CBCL non-faces "face"               | Matched-domain seed: `--neg-source mixed`                  | [Negative-domain gap](#1-negative-domain-gap)                        |
+| 2   | Stage 1 seed alone leaves stages 2–9 over-fit to Caltech                               | Stratified mining: stages 2+ also see CBCL non-faces       | [Stratified mining](#2-stratified-mining-not-just-stage-1)           |
+| 3   | 19×19 + CelebA → cascade collapses to 1.7 % recall                                     | Train at 24×24 + shift-jitter: `--jitter 2`                | [Pixel alignment at small res](#3-pixel-alignment-at-low-resolution) |
+| 4   | 1 943 unique CBCL faces is too few for a 9-stage cascade                               | Multi-source: `--face-source celeba+cbcl`                  | [Why multi-source](#4-multi-source-positives)                        |
+| 5   | Calibration hits the 0.5 cap at deep stages → FPR stays high                           | Allow per-stage threshold up to 0.95 (post-hoc + training) | [Calibration cap](#5-calibration-was-hitting-its-own-ceiling)        |
+| 6   | Same face fires at scales 1×, 1.5×, 2× → "boxes on boxes" after NMS                    | Hybrid NMS: `--nms-metric hybrid` (IoU **or** IoMin)       | [Hybrid NMS](#6-hybrid-nms-for-multi-scale-duplicates)               |
+| 7   | Hand-tuned `--layers` schedule rigid; first adaptive attempts collapsed to 1 WC/stage  | Calibrated-threshold FPR+recall early-stop (`--target-stage-fpr`) | [Adaptive cascade](#7-adaptive-cascade--calibrated-fpr--recall)      |
 
 **What each fix is NOT**: this is not a generic "tune and pray" flag set.
 Every option here exists because removing it produced a measurable, named
@@ -133,12 +134,19 @@ python main.py train \
 **The cascade is adaptive** — neither the number of stages nor the
 weak-classifier count per stage is fixed in advance:
 
-- Each stage stops adding weak classifiers when training-negative FPR
-  drops below `--target-stage-fpr` (paper §3, default `0.5`).
+- Each round, the stage threshold is recalibrated to keep `--layer-recall`
+  of val_pos passing, and FPR is measured at that calibrated threshold.
+  The stage stops adding weak classifiers when BOTH `recall ≥ --layer-recall`
+  AND `fpr ≤ --target-stage-fpr` hold simultaneously (paper §3, defaults
+  `0.99` and `0.5`). See [§ 7](#7-adaptive-cascade--calibrated-fpr--recall)
+  for why both conditions are needed and what went wrong without them.
 - The cascade stops adding stages when cumulative val-pos recall drops
   below `--min-cascade-recall`, when mining returns 0 hard negatives, or
   when `--max-stages` is reached.
 - `--max-wcs-per-stage` is a per-stage hard cap, not a target.
+- `--min-wcs-per-stage` (default `1`) is a safeguard floor — the early-stop
+  cannot fire until at least this many WCs are in. Inert with the current
+  calibrated check; left in as a knob for diagnostic experiments.
 
 Auto-loads `cbcl_neg_seed.npy` if present and uses it for the stage-1
 seed AND for stratified mining at every later stage. Also auto-loads
@@ -233,7 +241,8 @@ python tools/inspect_dataset.py
 | `--data-dir`             | `data/24` | Directory with NPY bundles from `prepare_data.py`                                                  |
 | `--max-stages`           | `30`      | Hard cap on cascade depth. Training stops earlier on `--min-cascade-recall` or pool exhaustion.    |
 | `--max-wcs-per-stage`    | `500`     | Per-stage hard cap on weak classifiers. Stages stop earlier via `--target-stage-fpr`.              |
-| `--target-stage-fpr`     | `0.5`     | Per-stage FPR target (paper §3). Stage stops when training-neg FPR drops to this. `0.0` = fixed-T. |
+| `--min-wcs-per-stage`    | `1`       | Per-stage floor before the FPR early-stop can fire. Inert with the calibrated check (see § 7).     |
+| `--target-stage-fpr`     | `0.5`     | Per-stage FPR target (paper §3) at the calibrated threshold. Paired with `--layer-recall` — both must hold to stop. `0.0` = fixed-T. |
 | `--min-cascade-recall`   | `0.80`    | Stop adding stages when cumulative val-pos recall drops below this.                                |
 | `--layer-recall`         | `0.99`    | Per-stage face-recall target for calibration; cumulative recall ≈ `layer-recall ^ N`               |
 | `--target-neg-per-stage` | `3000`    | Negatives mined per stage (split 50/50 across pools when `seed_neg_pool` exists)                   |
@@ -450,6 +459,70 @@ IoMin > 0.7, where IoMin = `intersection / min(area1, area2)`. IoMin is
 misses. The default `mode="weighted"` then merges the cluster into a
 single score-weighted-average box rather than dropping the smaller-scale
 detections, which produces tighter localization.
+
+### 7. Adaptive cascade — calibrated FPR + recall
+
+Early experimental runs used **fixed weak-classifier counts per stage**
+(`--layers 5 10 20 40 ...`). Each cascade was a hand-picked schedule —
+guess the right counts, retrain on failure. The paper does this
+differently: train each stage **until it meets a per-stage FPR target**,
+let depth emerge. Getting there cleanly took three attempts; each
+iteration uncovered a deeper bug than the last.
+
+**Attempt 1 — `--target-stage-fpr` early-stop, FPR measured at threshold
+0.5.** First adaptive version replaced `--layers` with a per-stage FPR
+target. The check in [adaboost.py](adaboost.py) measured FPR at
+threshold 0.5 (un-calibrated majority vote):
+
+```python
+fpr = (running_neg_scores / sum_alpha_fpr >= 0.5).mean()
+if fpr <= target_stage_fpr: break
+```
+
+But after each stage finishes, `calibrate()` lowers the deployed
+threshold to ~0.15-0.20 to keep `--layer-recall` of faces. **The FPR
+metric was at the wrong threshold.** Symptom: every stage stopped at
+round 1 — the first stump alone achieved FPR=0.15 ≤ 0.5 at threshold
+0.5, so AdaBoost halted. But at the actual deployed threshold the
+stage's recall was only 80 % and FPR was much higher. The cumulative
+val-recall check killed the cascade after one stage.
+
+**Attempt 2 — `--min-wcs-per-stage` floor.** Workaround: don't let the
+FPR early-stop fire until at least N weak classifiers are in. Hid the
+symptom but not the cause — the FPR metric was still measured at the
+wrong threshold, every stage stopped exactly at the floor (`min_wcs=5`
+→ all stages had exactly 5 WCs), and post-stage calibration was driving
+the threshold to the 0.95 cap because with so few WCs the score is too
+coarse to meet `target_recall`. Cascade depth was governed by a magic
+number.
+
+**Attempt 3 (current) — calibrated-threshold FPR + recall, both
+checked.** Per round inside [adaboost.py `train()`](adaboost.py):
+
+1. Apply the just-chosen weak classifier to val_pos (features
+   pre-computed once and cached as `xf_val_pos.npy` /
+   `xf_val_cal.npy`).
+2. Recalibrate `self.threshold` so `target_recall` of val_pos passes.
+3. Measure FPR on the stage's training negatives **at that threshold**.
+4. Early-stop only when `recall ≥ target_recall AND fpr ≤ target_fpr`
+   simultaneously — V&J §3 verbatim.
+
+The two-condition check matters because intra-stage there's a transient
+where the threshold is still settling: with 1-2 WCs the score has only
+2-3 distinct values, the threshold gets clamped at the
+`min(alphas)/sum(alphas)` floor (effectively 1.0 → capped to 0.95), and
+recall is artificially below target. The FPR at that clamped threshold
+looks small but is meaningless — recall isn't honored. Requiring recall
+≥ target gates the early-stop until the threshold has actually settled
+into the regime where both metrics reflect the deployed behavior.
+
+`--min-wcs-per-stage` survives as an inert safeguard (default 1).
+Bumping it doesn't change behavior when the calibrated check is active.
+
+**What this fixes:** cascade depth and per-stage WC count are genuinely
+emergent. Stage 1 typically trains 10-30 WCs on easy negatives; deeper
+stages grow toward the 200 cap as the remaining negatives get harder.
+No hand-tuned `--layers` schedule.
 
 ### A note on prevalence
 

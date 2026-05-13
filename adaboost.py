@@ -133,6 +133,7 @@ class AdaBoost:
             if target_stage_fpr is not None:
                 running_neg_scores += alpha * preds[neg_mask]
                 sum_alpha_fpr += alpha
+                recall_at_thr = 1.0  # legacy mode assumes recall is honored
                 if calibrated_mode:
                     # Score the just-chosen WC on val_pos and update the
                     # running val score, then recalibrate `self.threshold`
@@ -143,12 +144,23 @@ class AdaBoost:
                     val_scores = running_val_scores / sum_alpha_fpr
                     op_thr = self._calibrated_threshold(val_scores, target_recall)
                     self.threshold = op_thr
+                    # Recall AT the calibrated threshold. With few weak
+                    # classifiers the score is so coarse (2-3 distinct
+                    # values) that the min_thr floor / 0.95 cap inside
+                    # `_calibrated_threshold` can clamp the threshold above
+                    # the target-recall quantile — meaning the operating
+                    # point silently under-recalls. We measure recall
+                    # explicitly so the early-stop refuses to fire until
+                    # both d ≥ target_recall AND f ≤ target_stage_fpr can
+                    # be honored simultaneously (V&J §3).
+                    recall_at_thr = float((val_scores >= op_thr).mean())
                     # FPR at the actual operating point — the metric that
                     # matches the deployed cascade behavior.
                     fpr = float((running_neg_scores / sum_alpha_fpr >= op_thr).mean())
                     pbar.set_postfix(err='{:.4f}'.format(err),
                                      alpha='{:.3f}'.format(alpha),
                                      thr='{:.3f}'.format(op_thr),
+                                     rec='{:.3f}'.format(recall_at_thr),
                                      fpr='{:.3f}'.format(fpr))
                 else:
                     # Legacy: FPR at the un-calibrated 0.5 majority-vote
@@ -159,10 +171,16 @@ class AdaBoost:
                     pbar.set_postfix(err='{:.4f}'.format(err),
                                      alpha='{:.3f}'.format(alpha),
                                      fpr='{:.3f}'.format(fpr))
-                if fpr <= target_stage_fpr and len(self.clfs) >= self.min_estimators:
-                    pbar.write("[AdaBoost] FPR {:.3f} ≤ {:.3f}; early stop at "
-                               "round {}/{}".format(fpr, target_stage_fpr,
-                                                    t + 1, self.n_estimators))
+                recall_ok = (not calibrated_mode) or (recall_at_thr >= target_recall)
+                if (fpr <= target_stage_fpr
+                        and recall_ok
+                        and len(self.clfs) >= self.min_estimators):
+                    pbar.write("[AdaBoost] FPR {:.3f} ≤ {:.3f} & recall {:.3f} ≥ "
+                               "{:.3f}; early stop at round {}/{}".format(
+                                   fpr, target_stage_fpr,
+                                   recall_at_thr if calibrated_mode else 1.0,
+                                   target_recall if calibrated_mode else 0.0,
+                                   t + 1, self.n_estimators))
                     break
             else:
                 pbar.set_postfix(err='{:.4f}'.format(err), alpha='{:.3f}'.format(alpha))

@@ -279,6 +279,86 @@ threshold — so they don't fuse, producing "boxes on boxes" stacking.
 where `IoM = intersection / min(area1, area2)`. IoM is 1.0 for any nested box
 regardless of scale ratio, so it catches what IoU misses.
 
+### 6. Adaptive cascade — three iterations to a correct early-stop
+
+This one is worth recording in detail because the bug-hunt taught more about the
+algorithm than the fix itself. The goal was to replace the rigid
+`--layers 5 10 20 40 ...` schedule with a per-stage FPR target (V&J §3) so cascade
+depth and per-stage weak-classifier count emerge from training.
+
+**Iteration 1 — FPR at threshold 0.5.** First version of `target_stage_fpr` in
+`adaboost.py`:
+
+```python
+fpr = (running_neg_scores / sum_alpha_fpr >= 0.5).mean()
+if fpr <= target_stage_fpr: break
+```
+
+Symptom: every stage stopped at round 1.
+
+```
+[AdaBoost] FPR 0.150 ≤ 0.500; early stop at round 1/200
+   - layer threshold (after calibrate): 0.9500
+   - cumulative val recall: 0.8017  (stop if < 0.9)
+   ! Recall 0.8017 < 0.9: stopping cascade.
+```
+
+Root cause: the FPR check measures at `score ≥ 0.5` (un-calibrated majority vote),
+but the deployed threshold after `calibrate()` is ~0.15-0.20 (the operating point
+that maintains `--layer-recall=0.99` on val_pos). At threshold 0.5 a single decent
+stump easily achieves FPR=0.15; at the actual deployed threshold the FPR is much
+higher and recall collapses. The metric was lying.
+
+**Iteration 2 — `--min-wcs-per-stage` floor.** Workaround: gate the early-stop on
+`len(self.clfs) >= min_estimators`. Stage 1 now trained 5 WCs before the FPR check
+could fire.
+
+Symptom: every stage stopped at exactly `min_wcs`.
+
+```
+[AdaBoost] FPR 0.141 ≤ 0.300; early stop at round 5/200  (stage 1)
+[AdaBoost] FPR 0.128 ≤ 0.300; early stop at round 5/200  (stage 2)
+[AdaBoost] FPR 0.129 ≤ 0.300; early stop at round 5/200  (stage 3)
+...
+```
+
+Cascade compounded as expected (cumulative val-recall 0.99 → 0.98), but hard-neg
+mining FPR per stage dropped slowly (62 % → 42 % → 31 % → 18 % → 11 %). The 5-WC
+floor was hiding the fact that the metric itself was wrong: still at threshold 0.5,
+still lying about the operating point. The cascade was working but each stage was
+weaker than its log suggested.
+
+**Iteration 3 — calibrated FPR + recall, both checked.** The fix:
+
+1. Pre-compute features for val_pos once (cached as `data/24/_cache/xf_val_pos.npy`
+   or `xf_val_cal.npy` when CBCL-only calibration set exists).
+2. Per round in `AdaBoost.train`: apply the newly chosen WC to val_pos features,
+   maintain `running_val_scores`, recompute `self.threshold` via
+   `_calibrated_threshold()` so `target_recall` of val_pos passes.
+3. Compute `recall_at_thr = (val_scores >= threshold).mean()` and
+   `fpr_at_thr = (neg_scores >= threshold).mean()` — both at the same calibrated
+   threshold, both reflecting deployed behavior.
+4. Early-stop only when `recall_at_thr ≥ target_recall AND fpr_at_thr ≤
+   target_stage_fpr` — V&J §3 verbatim.
+
+The recall check matters because of an edge case: with 1-2 WCs the ensemble score
+takes only 2-3 distinct values; the recall-quantile lookup inside
+`_calibrated_threshold()` gets clamped by the `min(alphas)/sum(alphas)` floor or
+the 0.95 cap. At that clamped threshold, recall silently falls below target. The
+explicit check `recall_at_thr >= target_recall` refuses to early-stop until the
+threshold has settled into the regime where both metrics reflect reality.
+
+The barplot in the boosting progress now shows `thr=` decreasing from 0.95 toward
+the eventual operating point (~0.20-0.30), `rec=` climbing toward `target_recall`,
+and `fpr=` initially rising (as `thr` drops) then falling (as the ensemble
+strengthens at the lower threshold).
+
+`--min-wcs-per-stage` survives as an inert safeguard with default 1.
+
+**Lesson:** when introducing a "stop when metric X is good enough" rule, verify
+that X is measured at the same operating point as deployment. A metric at the
+wrong threshold is worse than no metric — it gives confident misleading numbers.
+
 ---
 
 ## What the other LLM suggested — assessment
@@ -293,6 +373,13 @@ adds unnecessary weak classifiers to early stages (already at low FPR) and stops
 early in late stages. The main cost is implementation complexity (need a per-stage FPR
 loop instead of `range(T)`). The payoff is a tighter cascade: fewer total weak
 classifiers, faster inference, and better calibration at each stage boundary.
+
+**UPDATE — implemented, after two false starts.** Naive version (FPR measured at the
+un-calibrated threshold 0.5, no recall check) collapsed every stage to 1 weak
+classifier. A `--min-wcs-per-stage` floor hid the symptom but not the cause. Working
+version (Bug #6 below) recalibrates the stage threshold every round on val_pos and
+requires BOTH `recall ≥ target_recall` AND `fpr ≤ target_stage_fpr` at that
+calibrated threshold — V&J §3 verbatim. See README § 7 for the narrative.
 
 ### `min_w=1, min_h=1` in `build_features`
 Adding 1–3 px Haar features would expand the feature set from ~60 K to potentially
@@ -378,12 +465,15 @@ In rough priority order:
 1. **Deeper cascade on CBCL-only data.** The 9-stage run saturated at 855 total weak
    classifiers. Going to 12–15 stages with the same budget-per-stage gives later stages
    more capacity to reject the residual near-faces that get through stage 9. Worth a
-   12–15 h run. Keep `--face-source cbcl` only.
+   12–15 h run. Keep `--face-source cbcl` only. Now easier to attempt — `--max-stages
+   N` instead of hand-tuning `--layers` (see Bug #6 / README § 7).
 
-2. **Adaptive per-stage FPR training.** Replace the fixed-T AdaBoost inner loop with
-   "keep adding weak classifiers until stage FPR < target" (as in the original paper).
-   Early stages get fewer classifiers (faster inference), later stages get more
-   (better rejection). Likely +0.02–0.05 F1 at same train time.
+2. **Re-measure with the adaptive cascade.** The F1=0.653 best was a fixed-`--layers`
+   schedule. With the new adaptive trainer + calibrated FPR+recall check, the same
+   data should produce a tighter cascade — early stages with fewer WCs (faster
+   inference), late stages with more (better rejection), and per-stage thresholds
+   already at the operating point so the post-hoc tuner has less to fix. Expect a
+   modest gain or roughly equivalent F1 at lower compute.
 
 3. **More CBCL faces.** CBCL HF train split has 2 429 unique faces. All augmentation
    and jitter permutations of that set are ~7 800 samples — still limited for 12+
