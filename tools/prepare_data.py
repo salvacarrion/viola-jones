@@ -20,6 +20,12 @@ Or explicit:
         --resolution 24 \\
         --augment
 
+Note on stalls at startup: `load_dataset` always pings the HF Hub to check
+the cached commit is current — that single HTTP request has no progress bar
+and can hang for tens of seconds on slow links. Once you know the cache is
+fresh, skip the Hub check with:
+    HF_HUB_OFFLINE=1 HF_DATASETS_OFFLINE=1 python tools/prepare_data.py ...
+
 Output layout:
     data/<res>/
         train_pos.npy, val_pos.npy, test_pos.npy
@@ -278,6 +284,10 @@ def main():
     print(f"   HF repo: {args.repo_id}")
 
     # ---- Load HF dataset (downloads on first call, cached afterwards) ----
+    # Even when fully cached, load_dataset pings the Hub to verify the local
+    # commit hash is current — that one HTTP call has no tqdm and can stall
+    # for tens of seconds. Set HF_HUB_OFFLINE=1 to skip it.
+    print("\nLoading HF dataset (checking Hub for updates, may stall on slow network)...")
     ds = load_dataset(args.repo_id)
     print(f"\nLoaded HF dataset:  {dict({s: len(ds[s]) for s in ds})}")
 

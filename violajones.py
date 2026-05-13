@@ -13,7 +13,7 @@ class ViolaJones:
     def __init__(self, features_path=None, layer_recall=0.99,
                  base_size=19, target_stage_fpr=None,
                  max_stages=30, max_wcs_per_stage=200,
-                 min_wcs_per_stage=5,
+                 min_wcs_per_stage=1,
                  min_cascade_recall=0.80):
         self.clfs = []
         # Native training-window size; sliding-window inference starts here
@@ -106,9 +106,11 @@ class ViolaJones:
                 len(val_cal_pos), len(val_pos)))
             X_cal_pos_ii  = np.array(list(map(integral_image, val_cal_pos)), dtype=np.uint32)
             X_cal_pos_std = self._sample_stds(val_cal_pos)
+            cal_cache_name = "xf_val_cal"
         else:
             X_cal_pos_ii  = X_val_pos_ii
             X_cal_pos_std = X_val_pos_std
+            cal_cache_name = "xf_val_pos"
 
         print("Building features...")
         start_time = time.time()
@@ -118,6 +120,12 @@ class ViolaJones:
 
         X_f_pos = self._apply_and_normalize(
             X_pos_ii, X_pos_std, features, cache_name="xf_pos")
+        # Calibration-set features: needed by AdaBoost.train so it can
+        # recalibrate the layer threshold every round and check FPR at the
+        # actual operating point (paper §3 — d ≥ target_recall AND f ≤ target
+        # measured at the same threshold). Same cache mechanism as X_f_pos.
+        X_f_val_cal = self._apply_and_normalize(
+            X_cal_pos_ii, X_cal_pos_std, features, cache_name=cal_cache_name)
 
         # ---- Determine starting stage (fresh vs. resume) ----
         # If self.clfs already has stages (loaded from a checkpoint), re-mine
@@ -184,8 +192,14 @@ class ViolaJones:
             clf = AdaBoost(n_estimators=max_wcs,
                            min_estimators=getattr(self, 'min_wcs_per_stage', 1))
             clf.train(X_f_stage, y_stage, features,
-                      target_stage_fpr=getattr(self, 'target_stage_fpr', None))
+                      target_stage_fpr=getattr(self, 'target_stage_fpr', None),
+                      X_val=X_f_val_cal,
+                      target_recall=self.layer_recall)
 
+            # Post-train calibration is a no-op when AdaBoost.train already
+            # set the threshold via the same val set + target_recall; we keep
+            # the call for the fixed-T (no target_stage_fpr) code path, where
+            # the per-round calibration is skipped.
             clf.calibrate(X_cal_pos_ii, X_cal_pos_std, target_recall=self.layer_recall)
             print("\t- layer threshold (after calibrate): {:.4f}".format(clf.threshold))
             self.clfs.append(clf)

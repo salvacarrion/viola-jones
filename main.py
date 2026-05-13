@@ -44,7 +44,7 @@ def _load_data(data_dir):
 def train(data_dir, layer_recall=0.99,
           target_neg_per_stage=3000, neg_sample_budget=100000,
           weights_dir="weights", seed=42, target_stage_fpr=None,
-          max_stages=30, max_wcs_per_stage=200, min_wcs_per_stage=5,
+          max_stages=30, max_wcs_per_stage=200, min_wcs_per_stage=1,
           min_cascade_recall=0.80, resume_from=None):
     bundles = _load_data(data_dir)
     train_pos = bundles["train_pos"]
@@ -211,12 +211,13 @@ if __name__ == "__main__":
                         help="Max weak classifiers per stage (default: 500). With "
                              "--target-stage-fpr, stages stop earlier when the FPR "
                              "target is met — this is only the hard upper bound.")
-    parser.add_argument("--min-wcs-per-stage", type=int, default=5,
+    parser.add_argument("--min-wcs-per-stage", type=int, default=1,
                         help="Min weak classifiers per stage before --target-stage-fpr "
-                             "can early-stop (default: 5). Prevents 1-2-stump stages "
-                             "where calibration can't pick a useful threshold and the "
-                             "layer collapses to accepting only windows the single "
-                             "stump fires on.")
+                             "can early-stop (default: 1 = safeguard inert). Since the "
+                             "FPR check now runs at the calibrated operating-point "
+                             "threshold, single-stump stages no longer collapse, so this "
+                             "floor is mostly a safety net. Raise it (e.g. to 5) if you "
+                             "still see stages stopping suspiciously early.")
     parser.add_argument("--min-cascade-recall", type=float, default=0.80,
                         help="Stop adding stages when cumulative val-pos recall drops "
                              "below this (default: 0.80). Prevents deep cascades from "

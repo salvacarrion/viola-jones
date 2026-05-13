@@ -27,7 +27,8 @@ class AdaBoost:
     # [OPT] feature_chunk=500 (was 2000): caps per-batch intermediates in
     # _best_stump at ~0.75 GB instead of ~3 GB. Bit-identical results;
     # slightly more loop iterations but much less memory pressure.
-    def train(self, X, y, features, feature_chunk=500, target_stage_fpr=None):
+    def train(self, X, y, features, feature_chunk=500, target_stage_fpr=None,
+              X_val=None, target_recall=None):
         """
         Boost `n_estimators` decision-stump rounds.
 
@@ -40,6 +41,19 @@ class AdaBoost:
             feature_chunk: features processed per vectorized batch — caps
                         the per-batch matrices at ~`feature_chunk × n_samples
                         × 4 bytes` floats. Tune down on memory pressure.
+            X_val:      (n_features, n_val_pos) variance-normalized feature
+                        matrix for the validation positives used to set the
+                        per-round calibrated threshold. Required for the
+                        "calibrated FPR" early-stop path described below.
+            target_recall: face-recall target for the per-round threshold
+                        calibration (e.g. 0.99). When `target_recall` and
+                        `X_val` are both set, `self.threshold` is recomputed
+                        every round so that at least this fraction of val_pos
+                        passes, and the FPR early-stop is evaluated AT that
+                        calibrated threshold — not at the un-calibrated 0.5.
+                        This matches V&J §3 (d ≥ 0.997 AND f ≤ 0.5 at the
+                        operating point). When omitted, the FPR check falls
+                        back to threshold=0.5 (legacy behavior).
 
         The expensive step (per-feature optimal threshold + weighted error)
         is fully vectorized: for each batch of features we sort row-wise,
@@ -57,15 +71,27 @@ class AdaBoost:
         if pos_num == 0 or neg_num == 0:
             raise ValueError("AdaBoost.train requires both positive and negative samples.")
 
+        calibrated_mode = (target_stage_fpr is not None
+                           and X_val is not None
+                           and target_recall is not None)
+        if calibrated_mode:
+            assert X_val.shape[0] == n_features, (
+                "X_val must have the same feature axis as X "
+                "({} vs {}).".format(X_val.shape[0], n_features))
+
         # Initial weights: balanced between classes (Viola-Jones §3, eq. 1).
         weights = np.where(y == 1, 0.5 / pos_num, 0.5 / neg_num).astype(np.float32)
 
-        # Adaptive FPR mode: accumulate weighted negative scores to check when
-        # the stage rejects enough training negatives at threshold=0.5.
+        # Adaptive FPR mode: accumulate weighted scores for the stage
+        # negatives (and, in calibrated mode, the validation positives) so
+        # we can probe the operating point each round without re-scoring
+        # from scratch.
         neg_mask = (y == 0)
         if target_stage_fpr is not None:
             running_neg_scores = np.zeros(int(neg_mask.sum()), dtype=np.float64)
             sum_alpha_fpr = 0.0
+            if calibrated_mode:
+                running_val_scores = np.zeros(X_val.shape[1], dtype=np.float64)
 
         start_time = time.time()
         pbar = tqdm(range(self.n_estimators), desc='Boosting rounds',
@@ -107,9 +133,32 @@ class AdaBoost:
             if target_stage_fpr is not None:
                 running_neg_scores += alpha * preds[neg_mask]
                 sum_alpha_fpr += alpha
-                fpr = float((running_neg_scores / sum_alpha_fpr >= 0.5).mean())
-                pbar.set_postfix(err='{:.4f}'.format(err), alpha='{:.3f}'.format(alpha),
-                                 fpr='{:.3f}'.format(fpr))
+                if calibrated_mode:
+                    # Score the just-chosen WC on val_pos and update the
+                    # running val score, then recalibrate `self.threshold`
+                    # to keep `target_recall` of val_pos passing.
+                    fv_val = X_val[best_j]
+                    preds_val = (pol * fv_val < pol * thr).astype(np.float32)
+                    running_val_scores += alpha * preds_val
+                    val_scores = running_val_scores / sum_alpha_fpr
+                    op_thr = self._calibrated_threshold(val_scores, target_recall)
+                    self.threshold = op_thr
+                    # FPR at the actual operating point — the metric that
+                    # matches the deployed cascade behavior.
+                    fpr = float((running_neg_scores / sum_alpha_fpr >= op_thr).mean())
+                    pbar.set_postfix(err='{:.4f}'.format(err),
+                                     alpha='{:.3f}'.format(alpha),
+                                     thr='{:.3f}'.format(op_thr),
+                                     fpr='{:.3f}'.format(fpr))
+                else:
+                    # Legacy: FPR at the un-calibrated 0.5 majority-vote
+                    # threshold. Reported FPR will under-estimate the real
+                    # operating-point FPR once `calibrate()` lowers the
+                    # threshold to keep faces.
+                    fpr = float((running_neg_scores / sum_alpha_fpr >= 0.5).mean())
+                    pbar.set_postfix(err='{:.4f}'.format(err),
+                                     alpha='{:.3f}'.format(alpha),
+                                     fpr='{:.3f}'.format(fpr))
                 if fpr <= target_stage_fpr and len(self.clfs) >= self.min_estimators:
                     pbar.write("[AdaBoost] FPR {:.3f} ≤ {:.3f}; early stop at "
                                "round {}/{}".format(fpr, target_stage_fpr,
@@ -217,26 +266,33 @@ class AdaBoost:
             [self.score(ii, std=float(s)) for ii, s in zip(X_pos_ii, X_pos_std)],
             dtype=np.float64,
         )
-        sorted_desc = np.sort(scores)[::-1]
+        self.threshold = self._calibrated_threshold(scores, target_recall)
+
+    def _calibrated_threshold(self, val_scores, target_recall):
+        """
+        Pick the largest threshold such that `target_recall` of `val_scores`
+        is ≥ threshold. Shared by `calibrate()` (post-stage, integral-image
+        path) and the per-round calibration inside `train()` (running
+        feature-matrix path).
+
+        Includes two safety bounds:
+          - Floor at `min(alphas)/sum(alphas)`: the score when only the
+            lowest-alpha weak classifier fires. With small T and high
+            target_recall a few faces may genuinely score 0; without the
+            floor the threshold collapses to 0 and the stage accepts every
+            window — flat patches included — defeating the cascade.
+          - Cap at 0.95: guards against the degenerate "threshold ≈ 1.0
+            accepts nothing" failure mode when a single dominant WC pushes
+            the recall-quantile to ~1.0.
+        """
+        sorted_desc = np.sort(np.asarray(val_scores, dtype=np.float64))[::-1]
         # We want fraction(scores >= threshold) >= target_recall, so we set
         # the threshold to the score at the ceil(target_recall * n)-th-
         # largest position.
         k = max(1, int(np.ceil(target_recall * len(sorted_desc))))
-        # Floor the threshold at the smallest non-zero score (= score when only
-        # the lowest-alpha weak classifier fires). With small T (e.g. T=3) and
-        # high target_recall (0.995), a few faces may genuinely score 0; without
-        # this floor the threshold collapses to 0 and the stage accepts every
-        # window — including flat patches — defeating the cascade's filtering.
         sum_alpha = sum(self.alphas)
         min_thr = (min(self.alphas) / sum_alpha) if sum_alpha > 0 else 0.0
-        # Allow tightening beyond 0.5 when val_pos supports it. The previous
-        # 0.5 cap (the un-calibrated AdaBoost majority-vote rule) was a
-        # safety net, but it artificially blocked deep stages where most
-        # val positives score >> 0.5; calibration wanted to push higher and
-        # got clamped, leaving FPR higher than necessary on test. The 0.95
-        # cap still guards against the degenerate "threshold ≈ 1.0 accepts
-        # nothing" failure mode.
-        self.threshold = float(min(0.95, max(min_thr, sorted_desc[k - 1])))
+        return float(min(0.95, max(min_thr, sorted_desc[k - 1])))
 
 
 def _fmt_time(start):
