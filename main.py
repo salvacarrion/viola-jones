@@ -44,7 +44,7 @@ def _load_data(data_dir):
 def train(data_dir, layer_recall=0.99,
           target_neg_per_stage=3000, neg_sample_budget=100000,
           weights_dir="weights", seed=42, target_stage_fpr=None,
-          max_stages=30, max_wcs_per_stage=500, min_wcs_per_stage=10,
+          max_stages=30, max_wcs_per_stage=200, min_wcs_per_stage=5,
           min_cascade_recall=0.80, resume_from=None):
     bundles = _load_data(data_dir)
     train_pos = bundles["train_pos"]
@@ -211,9 +211,9 @@ if __name__ == "__main__":
                         help="Max weak classifiers per stage (default: 500). With "
                              "--target-stage-fpr, stages stop earlier when the FPR "
                              "target is met — this is only the hard upper bound.")
-    parser.add_argument("--min-wcs-per-stage", type=int, default=10,
+    parser.add_argument("--min-wcs-per-stage", type=int, default=5,
                         help="Min weak classifiers per stage before --target-stage-fpr "
-                             "can early-stop (default: 10). Prevents 1-2-stump stages "
+                             "can early-stop (default: 5). Prevents 1-2-stump stages "
                              "where calibration can't pick a useful threshold and the "
                              "layer collapses to accepting only windows the single "
                              "stump fires on.")

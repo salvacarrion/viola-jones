@@ -12,8 +12,8 @@ class ViolaJones:
 
     def __init__(self, features_path=None, layer_recall=0.99,
                  base_size=19, target_stage_fpr=None,
-                 max_stages=30, max_wcs_per_stage=500,
-                 min_wcs_per_stage=10,
+                 max_stages=30, max_wcs_per_stage=200,
+                 min_wcs_per_stage=5,
                  min_cascade_recall=0.80):
         self.clfs = []
         # Native training-window size; sliding-window inference starts here
@@ -144,7 +144,7 @@ class ViolaJones:
 
         # ---- Cascade training ----
         max_stages = getattr(self, 'max_stages', 30)
-        max_wcs    = getattr(self, 'max_wcs_per_stage', 500)
+        max_wcs    = getattr(self, 'max_wcs_per_stage', 200)
         min_recall = getattr(self, 'min_cascade_recall', 0.80)
         for stage_idx in range(start_stage, max_stages):
             print("\n[CascadeClassifier] Stage {}/≤{} (max_wcs={})".format(
