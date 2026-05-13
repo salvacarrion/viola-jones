@@ -44,8 +44,8 @@ def _load_data(data_dir):
 def train(data_dir, layer_recall=0.99,
           target_neg_per_stage=3000, neg_sample_budget=100000,
           weights_dir="weights", seed=42, target_stage_fpr=None,
-          max_stages=30, max_wcs_per_stage=500, min_cascade_recall=0.80,
-          resume_from=None):
+          max_stages=30, max_wcs_per_stage=500, min_wcs_per_stage=10,
+          min_cascade_recall=0.80, resume_from=None):
     bundles = _load_data(data_dir)
     train_pos = bundles["train_pos"]
     val_pos = bundles["val_pos"]
@@ -92,6 +92,7 @@ def train(data_dir, layer_recall=0.99,
         clf.target_stage_fpr   = target_stage_fpr
         clf.max_stages         = max_stages
         clf.max_wcs_per_stage  = max_wcs_per_stage
+        clf.min_wcs_per_stage  = min_wcs_per_stage
         clf.min_cascade_recall = min_cascade_recall
     else:
         clf = ViolaJones(features_path=cache_dir,
@@ -99,6 +100,7 @@ def train(data_dir, layer_recall=0.99,
                          target_stage_fpr=target_stage_fpr,
                          max_stages=max_stages,
                          max_wcs_per_stage=max_wcs_per_stage,
+                         min_wcs_per_stage=min_wcs_per_stage,
                          min_cascade_recall=min_cascade_recall)
     clf.train(train_pos, val_pos, neg_pool,
               seed_neg_pool=seed_neg_pool,
@@ -209,6 +211,12 @@ if __name__ == "__main__":
                         help="Max weak classifiers per stage (default: 500). With "
                              "--target-stage-fpr, stages stop earlier when the FPR "
                              "target is met — this is only the hard upper bound.")
+    parser.add_argument("--min-wcs-per-stage", type=int, default=10,
+                        help="Min weak classifiers per stage before --target-stage-fpr "
+                             "can early-stop (default: 10). Prevents 1-2-stump stages "
+                             "where calibration can't pick a useful threshold and the "
+                             "layer collapses to accepting only windows the single "
+                             "stump fires on.")
     parser.add_argument("--min-cascade-recall", type=float, default=0.80,
                         help="Stop adding stages when cumulative val-pos recall drops "
                              "below this (default: 0.80). Prevents deep cascades from "
@@ -282,6 +290,7 @@ if __name__ == "__main__":
               target_stage_fpr=tgt_fpr,
               max_stages=args.max_stages,
               max_wcs_per_stage=args.max_wcs_per_stage,
+              min_wcs_per_stage=args.min_wcs_per_stage,
               min_cascade_recall=args.min_cascade_recall,
               resume_from=args.resume_from)
     elif args.mode == "test":

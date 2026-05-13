@@ -7,8 +7,15 @@ from weakclassifier import WeakClassifier
 
 
 class AdaBoost:
-    def __init__(self, n_estimators=10):
+    def __init__(self, n_estimators=10, min_estimators=1):
         self.n_estimators = n_estimators
+        # Floor on the adaptive early-stop: a stage with only 1-2 stumps has
+        # a 0/1-valued score, so the post-training `calibrate()` can't pick
+        # a useful operating point and the layer threshold collapses to the
+        # 0.95 cap, accepting only windows where that single stump fires.
+        # Keep adding rounds until at least `min_estimators` are in before
+        # the FPR check can fire.
+        self.min_estimators = min_estimators
         self.alphas = []
         self.clfs = []
         # Acceptance threshold as a fraction of sum(alphas) in [0, 1].
@@ -103,7 +110,7 @@ class AdaBoost:
                 fpr = float((running_neg_scores / sum_alpha_fpr >= 0.5).mean())
                 pbar.set_postfix(err='{:.4f}'.format(err), alpha='{:.3f}'.format(alpha),
                                  fpr='{:.3f}'.format(fpr))
-                if fpr <= target_stage_fpr:
+                if fpr <= target_stage_fpr and len(self.clfs) >= self.min_estimators:
                     pbar.write("[AdaBoost] FPR {:.3f} ≤ {:.3f}; early stop at "
                                "round {}/{}".format(fpr, target_stage_fpr,
                                                     t + 1, self.n_estimators))

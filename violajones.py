@@ -13,6 +13,7 @@ class ViolaJones:
     def __init__(self, features_path=None, layer_recall=0.99,
                  base_size=19, target_stage_fpr=None,
                  max_stages=30, max_wcs_per_stage=500,
+                 min_wcs_per_stage=10,
                  min_cascade_recall=0.80):
         self.clfs = []
         # Native training-window size; sliding-window inference starts here
@@ -33,6 +34,11 @@ class ViolaJones:
         # is reached. Number of stages emerges from training, not pre-specified.
         self.max_stages = max_stages
         self.max_wcs_per_stage = max_wcs_per_stage
+        # Floor for adaptive early-stop. With < ~10 weak classifiers the
+        # ensemble score is too coarse for `calibrate()` to find a useful
+        # threshold, so we force every stage to add at least this many
+        # rounds even if --target-stage-fpr would have stopped earlier.
+        self.min_wcs_per_stage = min_wcs_per_stage
         self.min_cascade_recall = min_cascade_recall
 
     def train(self, train_pos, val_pos, neg_pool, seed_neg_pool=None,
@@ -175,7 +181,8 @@ class ViolaJones:
             # X_f_stage = X_f_stage[:, perm]
             # y_stage = y_stage[perm]
 
-            clf = AdaBoost(n_estimators=max_wcs)
+            clf = AdaBoost(n_estimators=max_wcs,
+                           min_estimators=getattr(self, 'min_wcs_per_stage', 1))
             clf.train(X_f_stage, y_stage, features,
                       target_stage_fpr=getattr(self, 'target_stage_fpr', None))
 
