@@ -6,3 +6,5 @@ scikit-learn
 tqdm
 datasets
 huggingface_hub
+opencv-python
+mediapipe

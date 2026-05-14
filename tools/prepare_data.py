@@ -2,12 +2,12 @@
 
 Downloads `salvacarrion/face-detection` from the Hugging Face Hub (cached on
 first run) and writes NPY bundles consumed directly by `main.py`. The user
-picks ONE face source (celeba or fddb) and a target resolution; this script
-samples from it, splits 80/10/10 train/val/test, resizes to the target
-resolution, and extracts a Caltech negative pool for hard-negative mining.
+picks ONE face source and a target resolution; this script samples from it,
+splits 80/10/10 train/val/test, resizes to the target resolution, and
+extracts a Caltech negative pool for hard-negative mining.
 
-CBCL test set is bundled separately (the academic benchmark) — training never
-sees CBCL.
+CBCL test split is bundled separately (the academic benchmark) — training
+never sees the test set.
 
 Usage (defaults give a good first run):
     python tools/prepare_data.py
@@ -15,10 +15,10 @@ Usage (defaults give a good first run):
 
 Or explicit:
     python tools/prepare_data.py \\
-        --face-source fddb \\
+        --face-source celeba_aligned \\
         --n-faces 10000 \\
         --resolution 24 \\
-        --augment
+        --augment --jitter 2
 
 Note on stalls at startup: `load_dataset` always pings the HF Hub to check
 the cached commit is current — that single HTTP request has no progress bar
@@ -151,9 +151,16 @@ def gather_cbcl_negatives(ds_train, resolution: int,
 def build_caltech_pool(ds_negatives, resolution: int, n_patches: int,
                        patches_per_image: int,
                        rng: np.random.Generator) -> np.ndarray:
-    """Sample random patches from Caltech color JPGs at the target resolution."""
+    """Sample random patches from Caltech color JPGs at the target resolution.
+
+    Filters to `source=='caltech'` so we don't accidentally pick up CBCL
+    19×19 non-face crops as if they were Caltech images — they live in the
+    same split now and would silently corrupt the pool.
+    """
     print(f"Building Caltech pool: {n_patches:,} patches @ {resolution}×{resolution}")
-    n_imgs = len(ds_negatives)
+    ds_caltech = ds_negatives.filter(lambda x: x["source"] == "caltech")
+    print(f"\t- {len(ds_caltech):,} Caltech source images available")
+    n_imgs = len(ds_caltech)
     order = rng.permutation(n_imgs)
 
     pool = np.empty((n_patches, resolution, resolution), dtype=np.uint8)
@@ -164,7 +171,7 @@ def build_caltech_pool(ds_negatives, resolution: int, n_patches: int,
     for idx in order:
         if filled >= n_patches:
             break
-        pil = ds_negatives[int(idx)]["image"]
+        pil = ds_caltech[int(idx)]["image"]
         if pil.mode != "L":
             pil = pil.convert("L")
         iw, ih = pil.size
@@ -205,14 +212,13 @@ def main():
     ap = argparse.ArgumentParser(
         description=__doc__,
         formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--face-source", default="celeba",
+    ap.add_argument("--face-source", default="celeba_aligned",
                     help="Face dataset(s) to train on. Single source: "
-                         "'celeba', 'fddb', or 'cbcl'. Multi-source: '+'-separated, "
-                         "e.g. 'celeba+cbcl' to combine 10K CelebA + 2.4K CBCL "
-                         "for matched alignment + diverse identities at 24×24 "
-                         "(at this resolution CelebA's looser framing is "
-                         "absorbed by the 5px slack from 19×19, so the CelebA "
-                         "→CBCL alignment failure of 19×19 doesn't apply). "
+                         "'celeba', 'celeba_aligned', or 'cbcl'. Multi-source: "
+                         "'+'-separated, e.g. 'celeba_aligned+cbcl' to combine "
+                         "50K CelebA-aligned faces + 2.4K CBCL faces at 24×24 "
+                         "(both share the CBCL-canonical eye geometry — they "
+                         "stack cleanly without alignment mismatch). "
                          "`--n-faces` is the per-source cap; the sum is used. "
                          "(default: celeba)")
     ap.add_argument("--n-faces", type=int, default=DEFAULT_N_FACES,
@@ -225,6 +231,12 @@ def main():
                     help=f"Val fraction; test = 1 - train - val (default: {DEFAULT_VAL_FRAC}).")
     ap.add_argument("--augment", action="store_true",
                     help="Add horizontal-flip mirrors to training positives only.")
+    ap.add_argument("--no-augment-val", action="store_true",
+                    help="Skip h-flip augmentation on val_pos even when --augment "
+                         "is set. Use when val is large enough for stable 99-th "
+                         "percentile calibration without mirror pairs (≥~500 "
+                         "unique faces) and you suspect calibration overfit due "
+                         "to correlated h-flip pairs.")
     ap.add_argument("--jitter", type=int, default=0,
                     help="Shift-jitter augmentation: max pixel shift (default: 0 "
                          "= disabled). When > 0, faces are gathered at "
@@ -264,7 +276,7 @@ def main():
                  f"(got {args.train_frac + args.val_frac}).")
 
     # Parse multi-source spec (e.g. 'celeba+cbcl' → ['celeba', 'cbcl'])
-    valid_sources = {"celeba", "fddb", "cbcl"}
+    valid_sources = {"celeba", "celeba_aligned", "cbcl"}
     face_sources = [s.strip() for s in args.face_source.split("+") if s.strip()]
     bad = [s for s in face_sources if s not in valid_sources]
     if bad:
@@ -341,14 +353,19 @@ def main():
 
     if args.augment:
         train_pos = np.concatenate([train_pos, train_pos[:, :, ::-1]], axis=0)
+        print(f"   Augmented train_pos with h-flips → {len(train_pos):,}")
         # Augment val too — calibration needs a stable 99-th percentile of
         # positive scores, and 200-ish samples is too few for that. Augmenting
         # only train and not val left the cascade calibrated against an
         # easier-than-test val set, which compounded into ~40pp recall drop
-        # across 4 stages on the CBCL benchmark.
-        val_pos   = np.concatenate([val_pos,   val_pos[:, :, ::-1]],   axis=0)
-        print(f"   Augmented train_pos with h-flips → {len(train_pos):,}")
-        print(f"   Augmented val_pos   with h-flips → {len(val_pos):,}")
+        # across 4 stages on the CBCL benchmark. With --no-augment-val you
+        # opt out — only safe when val has enough unique faces on its own
+        # (jitter doubles it; 400-500+ samples is usually fine).
+        if not args.no_augment_val:
+            val_pos = np.concatenate([val_pos, val_pos[:, :, ::-1]], axis=0)
+            print(f"   Augmented val_pos   with h-flips → {len(val_pos):,}")
+        else:
+            print(f"   val_pos h-flip skipped (--no-augment-val) → {len(val_pos):,}")
 
     # ---- Val calibration subset (multi-source with CBCL only) ----
     # When training celeba+cbcl, calibrate() must see only CBCL val faces so
@@ -365,7 +382,7 @@ def main():
                                             args.jitter, rng)
             else:
                 val_cbcl_pos = val_unique_cbcl.copy()
-            if args.augment:
+            if args.augment and not args.no_augment_val:
                 val_cbcl_pos = np.concatenate([val_cbcl_pos, val_cbcl_pos[:, :, ::-1]])
             print(f"   val_cbcl_pos: {len(val_cbcl_pos):,} (CBCL-only calibration subset)")
 

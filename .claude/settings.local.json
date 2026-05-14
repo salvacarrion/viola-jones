@@ -18,7 +18,29 @@
       "Bash(python main.py train --help)",
       "Bash(python -c \"from violajones import ViolaJones; from adaboost import AdaBoost; vj = ViolaJones\\(\\); ab = AdaBoost\\(n_estimators=10, min_estimators=5\\); print\\('OK', vj.min_wcs_per_stage, ab.min_estimators\\)\")",
       "Bash(python -c \"from violajones import ViolaJones; v = ViolaJones\\(\\); print\\('OK'\\)\")",
-      "Bash(python -c \"from violajones import ViolaJones; v = ViolaJones\\(\\); print\\('min_wcs default =', v.min_wcs_per_stage\\)\")"
+      "Bash(python -c \"from violajones import ViolaJones; v = ViolaJones\\(\\); print\\('min_wcs default =', v.min_wcs_per_stage\\)\")",
+      "Bash(python -c ' *)",
+      "Bash(python -c \"import mediapipe, cv2; print\\('mp', mediapipe.__version__\\); print\\('cv2', cv2.__version__\\)\")",
+      "Bash(python -c \"import cv2; print\\('cv2 ok', cv2.__version__\\)\")",
+      "Bash(pip show *)",
+      "Bash(python -c \"import ast; ast.parse\\(open\\('tools/align_faces.py'\\).read\\(\\)\\); print\\('parse OK'\\)\")",
+      "Bash(python tools/align_faces.py --help)",
+      "Bash(python -c \"import ast; ast.parse\\(open\\('tools/align_faces.py'\\).read\\(\\)\\); print\\('OK'\\)\")",
+      "Bash(python -c \"import ast; ast.parse\\(open\\('tools/measure_cbcl_geometry.py'\\).read\\(\\)\\); print\\('OK'\\)\")",
+      "Bash(python -c \"import ast; ast.parse\\(open\\('tools/align_faces.py'\\).read\\(\\)\\); ast.parse\\(open\\('tools/measure_cbcl_geometry.py'\\).read\\(\\)\\); print\\('both OK'\\)\")",
+      "Bash(python -c \"import ast; ast.parse\\(open\\('tools/upload_aligned.py'\\).read\\(\\)\\); print\\('OK'\\)\")",
+      "Bash(python tools/upload_aligned.py --help)",
+      "Bash(python -c \"import ast; ast.parse\\(open\\('tools/build_clean_dataset.py'\\).read\\(\\)\\); print\\('OK'\\)\")",
+      "Bash(python -c \"import ast; ast.parse\\(open\\('tools/prepare_data.py'\\).read\\(\\)\\); print\\('OK'\\)\")",
+      "Read(//Users/salvacarrion/face-detection/data/**)",
+      "Read(//Users/salvacarrion/face-detection/**)",
+      "Bash(python -c \"import ast; ast.parse\\(open\\('tools/stage_clean_dataset.py'\\).read\\(\\)\\); print\\('OK'\\)\")",
+      "Bash(python tools/stage_clean_dataset.py --help)",
+      "Bash(python -c \"import ast; ast.parse\\(open\\('tools/export_dataset_to_disk.py'\\).read\\(\\)\\); print\\('OK'\\)\")",
+      "Bash(python -c \"import ast; ast.parse\\(open\\('tools/stage_clean_dataset.py'\\).read\\(\\)\\); print\\('OK stage'\\)\")",
+      "Bash(python -c \"import ast; ast.parse\\(open\\('tools/prepare_data.py'\\).read\\(\\)\\); ast.parse\\(open\\('tools/stage_clean_dataset.py'\\).read\\(\\)\\); print\\('both OK'\\)\")",
+      "Bash(python -c \"import ast; ast.parse\\(open\\('tools/drop_cbcl_aligned.py'\\).read\\(\\)\\); print\\('OK'\\)\")",
+      "Bash(python -c \"import ast; ast.parse\\(open\\('tools/prepare_data.py'\\).read\\(\\)\\); ast.parse\\(open\\('tools/stage_clean_dataset.py'\\).read\\(\\)\\); ast.parse\\(open\\('tools/build_clean_dataset.py'\\).read\\(\\)\\); print\\('all OK'\\)\")"
     ]
   }
 }
