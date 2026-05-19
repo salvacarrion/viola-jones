@@ -10,6 +10,30 @@ Reports, for each stage:
 
 Plus the score-distribution overlap (positive vs negative scores) per stage,
 which tells you whether each stage *could* reject more if calibrated tighter.
+
+Output table columns:
+    stage      Stage index (1-based).
+    T          Number of weak classifiers (decision stumps) trained in this
+               stage.
+    thr        Layer threshold after calibration. A sample passes this stage
+               iff its weighted-vote score is >= thr.
+    pos μ      Mean stage-score on CBCL test faces (range [0, 1]). Tracks how
+               face-like the typical face looks at this stage.
+    pos p1     1st percentile of positive scores — the bottom 1% tail. If
+               pos p1 < thr, the hardest 1% of faces get killed at this
+               stage. Margin (pos p1 − thr) is the recall safety buffer.
+    neg μ      Mean stage-score on CBCL test non-faces.
+    neg p99    99th percentile of negative scores — the most face-like 1%
+               of non-faces. If neg p99 > thr, the hardest non-faces still
+               pass; this is the "FPR ceiling" of the stage.
+    pass+      Cumulative fraction of positives surviving stages 1..k.
+               Should decay slowly (paper-style ≈ 0.99^k).
+    pass-      Cumulative fraction of negatives surviving stages 1..k.
+               Should decay exponentially (paper-style ≈ 0.5^k).
+    rej- this  Fraction of negatives that REACHED this stage and got
+               rejected by it alone (incremental rejection power). When this
+               drops to ~0.1 the stage isn't pulling its weight — either
+               negatives are exhausted or calibration is too loose.
 """
 
 import argparse
@@ -45,8 +69,8 @@ def main():
     args = ap.parse_args()
 
     clf = ViolaJones.load(args.weights)
-    pos = np.load(os.path.join(args.data_dir, "cbcl_test_pos.npy"))
-    neg = np.load(os.path.join(args.data_dir, "cbcl_test_neg.npy"))
+    pos = np.load(os.path.join(args.data_dir, "test_pos.npy"))
+    neg = np.load(os.path.join(args.data_dir, "test_neg.npy"))
     if len(neg) > args.max_neg:
         rng = np.random.default_rng(0)
         neg = neg[rng.choice(len(neg), size=args.max_neg, replace=False)]
@@ -54,7 +78,7 @@ def main():
     print(f"Cascade: {len(clf.clfs)} stages, T per stage = "
           f"{[len(s.clfs) for s in clf.clfs]}")
     print(f"Layer thresholds: {[round(s.threshold, 4) for s in clf.clfs]}")
-    print(f"CBCL test eval set: {len(pos)} faces, {len(neg)} non-faces "
+    print(f"Test eval set: {len(pos)} faces, {len(neg)} non-faces "
           f"@ {pos.shape[1]}×{pos.shape[2]}\n")
 
     Sp = per_stage_scores(clf, pos)   # (P, K)

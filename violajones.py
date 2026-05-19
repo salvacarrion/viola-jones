@@ -14,7 +14,8 @@ class ViolaJones:
                  base_size=19, target_stage_fpr=None,
                  max_stages=30, max_wcs_per_stage=200,
                  min_wcs_per_stage=1,
-                 min_cascade_recall=0.80):
+                 min_cascade_recall=0.80,
+                 min_stage_negatives=0):
         self.clfs = []
         # Native training-window size; sliding-window inference starts here
         # and grows by `base_scale`. Overwritten in `train()` based on the
@@ -40,9 +41,9 @@ class ViolaJones:
         # rounds even if --target-stage-fpr would have stopped earlier.
         self.min_wcs_per_stage = min_wcs_per_stage
         self.min_cascade_recall = min_cascade_recall
+        self.min_stage_negatives = min_stage_negatives
 
-    def train(self, train_pos, val_pos, neg_pool, seed_neg_pool=None,
-              val_cal_pos=None,
+    def train(self, train_pos, val_pos, neg_pool, neg_seed=None,
               target_neg_per_stage=3000, neg_sample_budget=100000, seed=42,
               checkpoint_path=None):
         """
@@ -50,21 +51,28 @@ class ViolaJones:
 
         Args:
             train_pos: (N, h, w) uint8 array of face crops used for AdaBoost.
-            val_pos:   (M, h, w) uint8 array of held-out faces used to
-                       calibrate each stage's threshold to `layer_recall`.
+                       May be augmented (jitter, h-flip) — diversity helps
+                       weak classifiers generalize.
+            val_pos:   (M, h, w) uint8 array of held-out faces sampled from
+                       the benchmark distribution (un-augmented, center crop).
+                       Used for BOTH:
+                         - per-stage threshold calibration (keep ≥ layer_recall
+                           of these passing each stage),
+                         - cumulative-recall stop criterion across stages.
+                       Anchoring val to the benchmark eliminates the val→test
+                       gap that augmented val sets introduce.
             neg_pool:  (P, h, w) uint8 array of face-free patches at the
                        same resolution. Used as the stage-1 seed (when
-                       `seed_neg_pool` is None) and as the pool for
-                       paper-style hard-negative mining (§3.1): between
-                       stages, partial-cascade false positives are kept
-                       as the next stage's training negatives.
-            seed_neg_pool: optional (Q, h, w) uint8 array of "near-domain"
-                       non-faces used ONLY for the stage-1 random sample.
-                       When training for a benchmark whose non-faces look
-                       face-like (e.g. CBCL), seeding stage 1 with matched
-                       non-faces fixes specificity drops that pure-Caltech
-                       seeding can't reach. From stage 2 on, hard-neg
-                       mining still draws from `neg_pool`.
+                       `neg_seed` is None) and as the pool for paper-style
+                       hard-negative mining (§3.1): between stages,
+                       partial-cascade false positives are kept as the next
+                       stage's training negatives.
+            neg_seed:  optional (Q, h, w) uint8 array of "near-domain"
+                       non-faces used ONLY for the stage-1 random sample
+                       (and 50/50 alongside `neg_pool` in deeper mining).
+                       Benchmark-style non-faces (e.g. CBCL) here fix the
+                       specificity drops that pure-Caltech seeding can't
+                       reach when the test distribution differs.
 
         Per-window variance normalization (§5.1) is always on:
           - Per-sample pixel stds are computed for positives and negatives.
@@ -73,9 +81,6 @@ class ViolaJones:
             std-normalized units.
           - At inference WeakClassifier.classify multiplies the threshold
             back by the window's std (see weakclassifier.py).
-
-        Calibration uses `val_pos` — fitting the threshold on the same
-        positives the weak classifiers were optimized on overstates recall.
         """
         rng = np.random.default_rng(seed)
         if len(train_pos) == 0 or len(val_pos) == 0:
@@ -92,25 +97,17 @@ class ViolaJones:
         print("\t- Size (WxH): {}x{}".format(img_w, img_h))
 
         # ---- Positive-side precomputation (done once) ----
+        # val_pos plays both roles (calibration anchor + stop criterion).
+        # We keep ONE set of val features cached for use by both AdaBoost's
+        # per-round threshold recalibration AND the cumulative-recall check
+        # at the end of each stage. Sharing the same set is what closes the
+        # "calibrate against X, check recall against Y" inconsistency that
+        # used to stop the cascade prematurely.
         print("Computing integral images for positives...")
         X_pos_ii = np.array(list(map(integral_image, train_pos)), dtype=np.uint32)
-        X_val_pos_ii = np.array(list(map(integral_image, val_pos)), dtype=np.uint32)
+        X_val_ii = np.array(list(map(integral_image, val_pos)), dtype=np.uint32)
         X_pos_std = self._sample_stds(train_pos)
-        X_val_pos_std = self._sample_stds(val_pos)
-
-        # Calibration positives: use CBCL-only val when training multi-source
-        # so CelebA outliers don't drag per-stage thresholds toward zero.
-        if val_cal_pos is not None and len(val_cal_pos) > 0:
-            print("Computing integral images for calibration val (CBCL-only)...")
-            print("\t- Calibration val: {:,} (CBCL-only, instead of mixed {:,})".format(
-                len(val_cal_pos), len(val_pos)))
-            X_cal_pos_ii  = np.array(list(map(integral_image, val_cal_pos)), dtype=np.uint32)
-            X_cal_pos_std = self._sample_stds(val_cal_pos)
-            cal_cache_name = "xf_val_cal"
-        else:
-            X_cal_pos_ii  = X_val_pos_ii
-            X_cal_pos_std = X_val_pos_std
-            cal_cache_name = "xf_val_pos"
+        X_val_std = self._sample_stds(val_pos)
 
         print("Building features...")
         start_time = time.time()
@@ -120,12 +117,12 @@ class ViolaJones:
 
         X_f_pos = self._apply_and_normalize(
             X_pos_ii, X_pos_std, features, cache_name="xf_pos")
-        # Calibration-set features: needed by AdaBoost.train so it can
+        # Validation-set features: needed by AdaBoost.train so it can
         # recalibrate the layer threshold every round and check FPR at the
         # actual operating point (paper §3 — d ≥ target_recall AND f ≤ target
-        # measured at the same threshold). Same cache mechanism as X_f_pos.
-        X_f_val_cal = self._apply_and_normalize(
-            X_cal_pos_ii, X_cal_pos_std, features, cache_name=cal_cache_name)
+        # measured at the same threshold).
+        X_f_val = self._apply_and_normalize(
+            X_val_ii, X_val_std, features, cache_name="xf_val")
 
         # ---- Determine starting stage (fresh vs. resume) ----
         # If self.clfs already has stages (loaded from a checkpoint), re-mine
@@ -134,9 +131,9 @@ class ViolaJones:
         # pool as usual.
         start_stage = len(self.clfs)
         if start_stage == 0:
-            seed_src = seed_neg_pool if (seed_neg_pool is not None and
-                                         len(seed_neg_pool) > 0) else neg_pool
-            seed_label = "seed_neg_pool" if seed_src is seed_neg_pool else "neg_pool"
+            seed_src = neg_seed if (neg_seed is not None and
+                                    len(neg_seed) > 0) else neg_pool
+            seed_label = "neg_seed" if seed_src is neg_seed else "neg_pool"
             n_take = min(target_neg_per_stage, len(seed_src))
             idxs = rng.choice(len(seed_src), size=n_take, replace=False)
             current_negs_X = seed_src[idxs]
@@ -146,7 +143,7 @@ class ViolaJones:
                   "hard negatives for stage {:,}...".format(start_stage, start_stage + 1))
             current_negs_X = self._mine_hard_negatives(
                 neg_pool, target_neg_per_stage, neg_sample_budget, rng,
-                seed_neg_pool=seed_neg_pool)
+                neg_seed=neg_seed)
             print("\t- {:,} hard negatives ready for stage {:,}".format(
                 len(current_negs_X), start_stage + 1))
 
@@ -157,8 +154,8 @@ class ViolaJones:
         for stage_idx in range(start_stage, max_stages):
             print("\n[CascadeClassifier] Stage {}/≤{} (max_wcs={})".format(
                 stage_idx + 1, max_stages, max_wcs))
-            if len(current_negs_X) == 0:
-                print("Cascade rejects all available negatives. Stopping early.")
+            if len(current_negs_X) == 0 or len(current_negs_X) < getattr(self, 'min_stage_negatives', 0):
+                print(f"Cascade found {len(current_negs_X)} negatives (requires >= {getattr(self, 'min_stage_negatives', 0)}). Stopping early.")
                 break
 
             print("Stage negatives: {:,}".format(len(current_negs_X)))
@@ -193,14 +190,14 @@ class ViolaJones:
                            min_estimators=getattr(self, 'min_wcs_per_stage', 1))
             clf.train(X_f_stage, y_stage, features,
                       target_stage_fpr=getattr(self, 'target_stage_fpr', None),
-                      X_val=X_f_val_cal,
+                      X_val=X_f_val,
                       target_recall=self.layer_recall)
 
             # Post-train calibration is a no-op when AdaBoost.train already
             # set the threshold via the same val set + target_recall; we keep
             # the call for the fixed-T (no target_stage_fpr) code path, where
             # the per-round calibration is skipped.
-            clf.calibrate(X_cal_pos_ii, X_cal_pos_std, target_recall=self.layer_recall)
+            clf.calibrate(X_val_ii, X_val_std, target_recall=self.layer_recall)
             print("\t- layer threshold (after calibrate): {:.4f}".format(clf.threshold))
             self.clfs.append(clf)
 
@@ -216,13 +213,46 @@ class ViolaJones:
                 print("\t- checkpoint -> {}.pkl  (stages {}/≤{})".format(
                     checkpoint_path, stage_idx + 1, max_stages))
 
+            # ---- Capacity-ceiling check: stage capped without hitting target ----
+            # AdaBoost.train sets clf.final_fpr to the FPR at the operating
+            # point at end of training. If `target_stage_fpr` was active and
+            # final_fpr > target, the stage ran to max_wcs_per_stage without
+            # being able to satisfy the per-stage criterion — the cascade has
+            # hit its representational ceiling for the (resolution × jitter ×
+            # neg-budget) combination. Continuing would just stack more
+            # degenerate stages (each with FPR > target). Stop and surface
+            # the issue, but KEEP the capped stage in the cascade — it still
+            # adds some rejection (it just doesn't hit 50% on its own), and
+            # the work is already done. The user can:
+            #   1) resume with --target-stage-fpr > final_fpr to extend with
+            #      a relaxed criterion (the capped stage already satisfies it),
+            #   2) drop the capped stage via tools/truncate_checkpoint.py for
+            #      a "pristine" cascade where every stage satisfies the target.
+            tgt_fpr = getattr(self, 'target_stage_fpr', None)
+            if (tgt_fpr is not None
+                    and clf.final_fpr is not None
+                    and clf.final_fpr > tgt_fpr):
+                print("\t! Stage {} capped without satisfying target_stage_fpr: "
+                      "final FPR {:.4f} > target {:.3f}.".format(
+                          stage_idx + 1, clf.final_fpr, tgt_fpr))
+                print("\t  Cascade at capacity ceiling — stopping.")
+                print("\t  Stage kept in checkpoint (still rejects ~{:.0%} of "
+                      "remaining hard-negs).".format(1.0 - clf.final_fpr))
+                print("\t  To extend: --resume-from with --target-stage-fpr "
+                      "> {:.3f}.".format(clf.final_fpr))
+                print("\t  Or drop this stage with "
+                      "tools/truncate_checkpoint.py for a pristine cascade.")
+                break
+
             # ---- Global stopping: cumulative recall on val_pos ----
-            # Count how many val faces pass ALL trained stages so far. If it
-            # drops below min_cascade_recall, adding more stages would only
-            # hurt recall further without proportional FPR gain.
-            n_pass = sum(1 for ii, s in zip(X_val_pos_ii, X_val_pos_std)
+            # Measured on X_val_ii — the SAME set the per-stage threshold
+            # calibrates against. Consistency matters: thresholds are tuned
+            # to keep `layer_recall` of val_pos passing, so cumulative recall
+            # here tracks what we actually retain at the test distribution
+            # (val_pos is sampled from the benchmark, un-augmented).
+            n_pass = sum(1 for ii, s in zip(X_val_ii, X_val_std)
                          if self.classify_ii(ii, std=float(s)) == 1)
-            cum_recall = n_pass / len(val_pos)
+            cum_recall = n_pass / len(X_val_ii)
             print("\t- cumulative val recall: {:.4f}  (stop if < {})".format(
                 cum_recall, min_recall))
             if cum_recall < min_recall:
@@ -233,7 +263,7 @@ class ViolaJones:
             # ---- Mine negatives for the next stage ----
             current_negs_X = self._mine_hard_negatives(
                 neg_pool, target_neg_per_stage, neg_sample_budget, rng,
-                seed_neg_pool=seed_neg_pool)
+                neg_seed=neg_seed)
             print("\t- negatives carried to next stage: {}".format(len(current_negs_X)))
 
     @staticmethod
@@ -264,10 +294,39 @@ class ViolaJones:
             print("Cached -> {}".format(cache_path))
         return X_f
 
-    def _mine_from_pool(self, pool, target, budget, rng, label=""):
+    def _mine_from_pool(self, pool, target, budget, rng, label="",
+                        chunk_size=50000):
         """Sample patches from one pool, keep those misclassified as faces.
 
         Returns a list (not array) so the caller can concatenate across pools.
+
+        Memory pattern: visits the pool in `chunk_size`-sized contiguous
+        slices, with chunk order randomly permuted. Within a chunk, traversal
+        is sequential. This is the key to making mining work on a pool larger
+        than RAM:
+
+          - With random per-patch indexing (the previous behavior), each
+            `pool[idx]` on a memmap'd .npy triggers a page fault for a
+            ~4 KB OS page that holds ~11 contiguous patches — of which we
+            use 1. With a 50M-patch pool (~18 GB) and 16 GB RAM, the page
+            cache thrashes: throughput drops from ~30 K patches/s to
+            ~8 K patches/s, and swap fills up.
+
+          - Sequential reads inside a chunk let OS prefetch do its job
+            (11 patches per page, all consumed). Random chunk order
+            preserves unbiasedness against budget cutoffs — we don't bias
+            toward the start of the file when the cascade is strong and
+            we stop early.
+
+        Since `classify(patch)` is deterministic, traversal order does NOT
+        change which patches end up in `found` — only the wall-clock cost
+        of reaching them. Result is statistically equivalent to the prior
+        random-index implementation, just memory-friendly.
+
+        `.copy()` on found patches is load-bearing: without it, each kept
+        patch is a numpy view into the chunk, which keeps the whole chunk
+        alive — defeating the chunked-release pattern and leaking memory
+        in proportion to (#chunks visited × chunk_size).
         """
         found = []
         sampled = 0
@@ -278,19 +337,32 @@ class ViolaJones:
         start_time = time.time()
         pbar = tqdm(total=target, desc=f"Mining{' '+label if label else ''}",
                     unit='neg', leave=False)
-        while len(found) < target and sampled < budget:
-            batch_size = min(2000, budget - sampled, pool_size)
-            idxs = rng.choice(pool_size, size=batch_size, replace=False)
-            for idx in idxs:
-                patch = pool[idx]
+
+        n_chunks = (pool_size + chunk_size - 1) // chunk_size
+        chunk_order = rng.permutation(n_chunks)
+        done = False
+        for chunk_idx in chunk_order:
+            if done:
+                break
+            i0 = int(chunk_idx) * chunk_size
+            i1 = min(i0 + chunk_size, pool_size)
+            # Materialize the chunk in RAM (~18 MB at chunk_size=50000 @19×19).
+            # For memmap pools this is a contiguous read — OS prefetch loves it.
+            chunk = np.asarray(pool[i0:i1])
+            for patch in chunk:
                 if self.classify(patch) == 1:
-                    found.append(patch)
+                    # `.copy()`: detach from `chunk` so we can release it on
+                    # next iteration without invalidating kept patches.
+                    found.append(patch.copy())
                     pbar.update(1)
-                    if len(found) >= target:
-                        break
-            sampled += batch_size
+                sampled += 1
+                if len(found) >= target or sampled >= budget:
+                    done = True
+                    break
             pbar.set_postfix(sampled='{:,}'.format(sampled),
-                           fpr='{:.2f}%'.format(100.0 * len(found) / max(sampled, 1)))
+                             fpr='{:.2f}%'.format(100.0 * len(found) / max(sampled, 1)))
+            # Drop the local ref so the chunk can be GC'd before the next slice.
+            del chunk
         pbar.close()
         print("\t- {}mined {} from {} ({:.2f}% FPR) in {}".format(
             prefix, len(found), sampled,
@@ -298,27 +370,27 @@ class ViolaJones:
         return found
 
     def _mine_hard_negatives(self, neg_pool, target, budget, rng,
-                             seed_neg_pool=None):
+                             neg_seed=None):
         """Mine hard negatives, optionally stratified across two pools.
 
-        When `seed_neg_pool` is given (e.g. CBCL non-faces), allocate half
-        the target/budget to it and the other half to `neg_pool` (Caltech).
+        When `neg_seed` is given (e.g. CBCL non-faces), allocate half the
+        target/budget to it and the other half to `neg_pool` (Caltech).
         This keeps matched-domain hard negatives in the training mix at
         EVERY stage, not just stage 1 — fixing the "stage 9 trained with
         only Caltech-flavored negatives" symptom we observed.
         """
         print("Mining hard negatives (target={}, budget={})...".format(target, budget))
         found = []
-        if seed_neg_pool is not None and len(seed_neg_pool) > 0:
+        if neg_seed is not None and len(neg_seed) > 0:
             t_seed = target // 2
             t_main = target - t_seed
             # Cap seed budget at "scan whole pool 2×" — past that, we're
             # just resampling the same patches and mining returns nothing
             # new. Any unspent budget is reallocated to the main pool below.
             b_seed_requested = budget // 2
-            b_seed = min(b_seed_requested, len(seed_neg_pool) * 2)
+            b_seed = min(b_seed_requested, len(neg_seed) * 2)
             b_main = budget - b_seed
-            found += self._mine_from_pool(seed_neg_pool, t_seed, b_seed, rng,
+            found += self._mine_from_pool(neg_seed, t_seed, b_seed, rng,
                                           label="seed")
             # If the seed pool didn't yield its share (small pool gets
             # exhausted in deep stages), backfill from the main pool.
@@ -345,23 +417,43 @@ class ViolaJones:
                 return 0
         return 1
 
-    def find_faces(self, pil_image, growth=None, min_shift=None):
+    def find_faces(self, pil_image, growth=None, min_shift=None,
+                   min_face_size=None, max_face_size=None):
         """
         Multi-scale sliding-window detection on a PIL image.
 
-        Strategy (paper §5):
-          - One padded integral image + one squared II for the WHOLE image;
-            every per-window feature lookup and per-window std becomes O(1).
-            Querying via (ox, oy) offsets means we never re-cumsum a cropped
-            window (the old per-window II was correct but ~100× slower).
+        Strategy (paper §5) — fully vectorized cascade per scale:
+          - One padded integral image + one squared II for the WHOLE image.
+          - At each scale we form the grid of window origins (x1, y1) and
+            evaluate every cascade stage as a batched NumPy reduction over
+            *all* surviving windows. Stage k sees only windows that passed
+            stage k-1, preserving the per-window early-exit cascade without
+            any Python-level per-window dispatch. The inner work is 4
+            fancy-indexed array reads per Haar rectangle, so we replace
+            millions of scalar Python lookups with a handful of vectorized
+            ones — ~20-50× faster than the old per-window loop.
           - Window shift grows with scale: at scale s we step `max(1, s)`
             pixels. Stepping 2px at scale 8 just produces near-duplicate
             detections that NMS later collapses anyway.
 
+        Args:
+            min_face_size: smallest detectable face in image pixels. Skips
+                pyramid scales whose window is smaller than this. The
+                training resolution (`base_width`) is the hard floor — a
+                value below it is silently clamped.
+            max_face_size: largest detectable face in image pixels. Stops
+                the pyramid once the window exceeds this.
+
         Returns:
             list of (x1, y1, x2, y2, score) tuples in image coordinates.
-            `score` is the cascade depth (number of stages passed) — useful
-            as a confidence signal for `non_maximum_supression`.
+            `score` is the sum of per-stage AdaBoost margins
+            (`vote − layer_threshold`, where `vote = Σαᵢ·hᵢ(x)/Σαᵢ`)
+            accumulated across every stage the window passed. A confident
+            face clears every threshold with room to spare and accumulates
+            a large margin; a borderline FP scrapes through and ends with
+            a near-zero score. This continuous score is what
+            `non_maximum_supression` uses to weight the cluster centroid
+            and to pick the representative in greedy mode.
         """
         w, h = self.base_width, self.base_height
         if growth is None:
@@ -375,67 +467,120 @@ class ViolaJones:
         if img_h < h or img_w < w:
             return []
 
-        # Single-shot integral images for the entire image
-        ii = integral_image(image)               # (img_h+1, img_w+1)
-        ii2 = integral_image_pow2(image)
+        # Single-shot integral images for the entire image. Cast to int64
+        # up front so all the rect-sum subtractions stay in signed
+        # arithmetic without per-window casts.
+        ii = integral_image(image).astype(np.int64)
+        ii2 = integral_image_pow2(image).astype(np.int64)
 
-        # Cheap up-front pass to size the progress bar correctly
-        total_windows = 0
-        s = 1.0
-        while int(w * s) <= img_w and int(h * s) <= img_h:
-            wh, ww = int(h * s), int(w * s)
-            shift = max(min_shift, int(s))
-            total_windows += (1 + (img_h - wh) // shift) * (1 + (img_w - ww) // shift)
-            s *= growth
+        # Resolve scale bounds from face-size limits. base_width is the
+        # floor — smaller windows can't match the learned features.
+        start_scale = 1.0
+        if min_face_size is not None:
+            start_scale = max(1.0, float(min_face_size) / max(w, h))
+        max_scale = (float(max_face_size) / max(w, h)
+                     if max_face_size is not None else None)
+
+        # Snapshot per-stage data once: alphas vector, sum(alphas), the
+        # calibrated layer threshold, and the WC list.
+        stages = [(np.asarray(c.alphas, dtype=np.float64),
+                   float(sum(c.alphas)),
+                   float(c.threshold),
+                   c.clfs)
+                  for c in self.clfs]
 
         regions = []
-        scale = 1.0
-        pbar = tqdm(total=total_windows, desc='Sliding window',
-                    unit='win', leave=False)
+        scale = start_scale
+        pbar = tqdm(desc='Pyramid', unit='scale', leave=False)
         while int(w * scale) <= img_w and int(h * scale) <= img_h:
+            if max_scale is not None and scale > max_scale:
+                break
             win_w = int(w * scale)
             win_h = int(h * scale)
-            area = float(win_w * win_h)
             shift = max(min_shift, int(scale))
 
-            for y1 in range(0, img_h - win_h + 1, shift):
-                y2 = y1 + win_h
-                for x1 in range(0, img_w - win_w + 1, shift):
-                    x2 = x1 + win_w
-                    # Per-window mean and std via the full-image IIs
-                    sum_x = (int(ii[y2, x2]) - int(ii[y1, x2])
-                             - int(ii[y2, x1]) + int(ii[y1, x1]))
-                    sum_x2 = (int(ii2[y2, x2]) - int(ii2[y1, x2])
-                              - int(ii2[y2, x1]) + int(ii2[y1, x1]))
-                    mean = sum_x / area
-                    var = sum_x2 / area - mean * mean
-                    std = max(var, 0.0) ** 0.5
-                    std = std if std >= 1.0 else 1.0
+            ys = np.arange(0, img_h - win_h + 1, shift, dtype=np.int64)
+            xs = np.arange(0, img_w - win_w + 1, shift, dtype=np.int64)
+            if ys.size == 0 or xs.size == 0:
+                scale *= growth
+                continue
+            yy, xx = np.meshgrid(ys, xs, indexing='ij')
+            x1 = xx.ravel()
+            y1 = yy.ravel()
+            x2 = x1 + win_w
+            y2 = y1 + win_h
 
-                    score = self._cascade_score(
-                        ii, scale=scale, std=std, ox=x1, oy=y1)
-                    if score > 0:
-                        regions.append((x1, y1, x2, y2, score))
-                    pbar.update(1)
+            # Per-window pixel std via the full-image IIs (vectorized).
+            area = float(win_w * win_h)
+            sum_x = ii[y2, x2] - ii[y1, x2] - ii[y2, x1] + ii[y1, x1]
+            sum_x2 = ii2[y2, x2] - ii2[y1, x2] - ii2[y2, x1] + ii2[y1, x1]
+            mean = sum_x / area
+            var = sum_x2 / area - mean * mean
+            std = np.sqrt(np.maximum(var, 0.0))
+            std = np.where(std >= 1.0, std, 1.0)
+
+            # Cascade: filter the alive index set stage by stage, and
+            # accumulate the per-stage margin (vote − layer_thr) as a
+            # continuous confidence score per surviving window.
+            alive = np.arange(x1.size, dtype=np.int64)
+            margin_sum = np.zeros(x1.size, dtype=np.float64)
+            s2 = scale * scale
+            for alphas, sum_alpha, layer_thr, wcs in stages:
+                if alive.size == 0 or sum_alpha <= 0.0:
+                    break
+                ox = x1[alive]
+                oy = y1[alive]
+                std_a = std[alive]
+                total = np.zeros(alive.size, dtype=np.float64)
+                for alpha, wc in zip(alphas, wcs):
+                    fv = self._batch_haar_value(wc.haar_feature, ii,
+                                                scale, ox, oy)
+                    thr_scaled = wc.threshold * s2 * std_a
+                    pol = wc.polarity
+                    pred = pol * fv < pol * thr_scaled
+                    total += alpha * pred
+                vote = total / sum_alpha
+                passed = vote >= layer_thr
+                margin_sum[alive[passed]] += vote[passed] - layer_thr
+                alive = alive[passed]
+
+            if alive.size:
+                xs1 = x1[alive].tolist()
+                ys1 = y1[alive].tolist()
+                xs2 = x2[alive].tolist()
+                ys2 = y2[alive].tolist()
+                scs = margin_sum[alive].tolist()
+                regions.extend((xs1[i], ys1[i], xs2[i], ys2[i], scs[i])
+                               for i in range(alive.size))
 
             pbar.set_postfix(scale='{:.2f}'.format(scale),
                              detections=len(regions))
+            pbar.update(1)
             scale *= growth
         pbar.close()
         return regions
 
-    def _cascade_score(self, ii, scale=1.0, std=1.0, ox=0, oy=0):
+    @staticmethod
+    def _batch_haar_value(haar, ii, scale, ox, oy):
+        """Vectorized Haar feature value across a batch of window origins.
+
+        `ox`, `oy` are int64 arrays. Returns an int64 array of
+        `sum(negative_regions) - sum(positive_regions)`, element-wise
+        identical to `HaarFeature.compute_value` for each (ox[i], oy[i]).
         """
-        Run the cascade. Return:
-          0 if any stage rejects (early exit, paper §4),
-          else the number of stages passed (= cascade depth) — used as a
-          confidence proxy for downstream NMS so deeper-passing windows
-          beat shallower neighbors.
-        """
-        for i, clf in enumerate(self.clfs):
-            if clf.classify(ii, scale=scale, std=std, ox=ox, oy=oy) == 0:
-                return 0
-        return len(self.clfs)
+        def rects_sum(regions):
+            total = np.zeros(ox.shape, dtype=np.int64)
+            for r in regions:
+                dx1 = int(r.x * scale)
+                dy1 = int(r.y * scale)
+                dx2 = int((r.x + r.width) * scale)
+                dy2 = int((r.y + r.height) * scale)
+                total += (ii[oy + dy2, ox + dx2]
+                          - ii[oy + dy1, ox + dx2]
+                          - ii[oy + dy2, ox + dx1]
+                          + ii[oy + dy1, ox + dx1])
+            return total
+        return rects_sum(haar.negative_regions) - rects_sum(haar.positive_regions)
 
     def save(self, filename):
         with open(filename + ".pkl", 'wb') as f:

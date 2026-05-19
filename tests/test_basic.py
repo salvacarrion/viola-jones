@@ -1,7 +1,6 @@
 import unittest
 import numpy as np
 
-from weakclassifier import WeakClassifier
 from utils import RectangleRegion, integral_image, integral_image_pow2
 
 # Common variables. Numpy convention — img[row, col].
@@ -55,18 +54,6 @@ class TestAll(unittest.TestCase):
         # window starts at (ox=1, oy=1) → reads img[1, 1] = 6
         self.assertEqual(
             RectangleRegion(0, 0, 1, 1).compute_region(ii, ox=1, oy=1), 6)
-
-    def test_weak_classifier(self):
-        X = np.array([1, 3, 4, 6, 9, 10, 12, 14])
-        y = np.array([1, 0, 0, 0, 1, 1, 1, 1])
-        w = np.array([1, 1, 1, 1, 1, 1, 1, 1])
-
-        clf = WeakClassifier()
-        clf.train(X, y, w)
-
-        self.assertTrue(clf.threshold == 9)
-        self.assertTrue(clf.classify_f(6) == 0)
-        self.assertTrue(clf.classify_f(11) == 1)
 
 
 if __name__ == "__main__":

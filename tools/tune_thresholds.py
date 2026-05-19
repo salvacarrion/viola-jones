@@ -7,10 +7,23 @@ gap), the trained thresholds end up systematically too low or too high
 for the benchmark we actually care about.
 
 This script edits each stage's threshold to maximize F1 on the CBCL
-benchmark — without touching any weak classifier. It's NOT data leakage
-in any meaningful sense: the cascade's structure (features, alphas,
-rejection geometry) is fully fixed at training time; we only choose
-where to slice the cumulative score, which is a single scalar per stage.
+benchmark — without touching any weak classifier. The cascade's
+structure (features, alphas, rejection geometry) is fully fixed at
+training time; we only choose where to slice the cumulative score,
+which is a single scalar per stage.
+
+⚠️ METHODOLOGY WARNING — model-selection vs reportable test
+   This tuner optimizes over `test_pos.npy` / `test_neg.npy`. Tuning K=10–15
+   scalars over <500 faces is mild but it IS model selection, so the
+   resulting F1 is biased upward and should NOT be reported as the
+   cascade's "test F1" without disclosure. For a clean evaluation:
+
+     1. Carve a SECOND held-out split (e.g. a 50/50 partition of
+        test_pos/test_neg) and tune against it.
+     2. Report final F1 on the untouched test split.
+     3. Or report BOTH numbers: "calibrated thresholds (no test leak)"
+        AND "tuned thresholds (oracle upper bound)" — the gap measures
+        how much the calibration anchor mismatched test.
 
 The greedy sweep is fast because we precompute every (sample, stage)
 score once; threshold combinations then reduce to boolean masks over
@@ -150,9 +163,9 @@ def main():
 
     print(f"Loading cascade: {args.weights}")
     clf = ViolaJones.load(args.weights)
-    pos = np.load(os.path.join(args.data_dir, "cbcl_test_pos.npy"))
-    neg = np.load(os.path.join(args.data_dir, "cbcl_test_neg.npy"))
-    print(f"CBCL test set: {len(pos):,} faces, {len(neg):,} non-faces "
+    pos = np.load(os.path.join(args.data_dir, "test_pos.npy"))
+    neg = np.load(os.path.join(args.data_dir, "test_neg.npy"))
+    print(f"Test set: {len(pos):,} faces, {len(neg):,} non-faces "
           f"@ {pos.shape[1]}×{pos.shape[2]}")
 
     print("\nPre-computing positive scores...")

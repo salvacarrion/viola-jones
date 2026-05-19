@@ -1,37 +1,52 @@
 """Build training-ready NPY bundles from the HF face-detection dataset.
 
 Downloads `salvacarrion/face-detection` from the Hugging Face Hub (cached on
-first run) and writes NPY bundles consumed directly by `main.py`. The user
-picks ONE face source and a target resolution; this script samples from it,
-splits 80/10/10 train/val/test, resizes to the target resolution, and
-extracts a Caltech negative pool for hard-negative mining.
+first run) and writes NPY bundles consumed directly by `main.py`.
 
-CBCL test split is bundled separately (the academic benchmark) — training
-never sees the test set.
+Data layout:
+    `--face-source <X>` drives the TRAINING positives. May be augmented and
+        jittered. Single or '+'-combined (e.g. 'celeba_aligned+cbcl').
+    `--benchmark <Y>` (default: cbcl, or 'none' to skip eval) drives BOTH
+        the validation set and the test set:
+          - val_pos: `--val-size` faces sampled from the benchmark's HF train
+            split, ALWAYS un-augmented (center crop only). Used at training
+            time for (a) per-stage threshold calibration and (b) the
+            cumulative-recall stop criterion. Anchoring val to the benchmark's
+            distribution eliminates the val→test gap that augmented val sets
+            introduce.
+          - test_pos / test_neg: from the benchmark's HF test split,
+            untouched. Used only by `main.py test`.
+    `--neg-source <Z>` controls the negative pool for hard-negative mining:
+          - caltech: random patches from Caltech-256 (diverse, easy)
+          - benchmark: benchmark non-faces (matched, small, will exhaust)
+          - mixed (default+recommended): benchmark non-faces as stage-1 seed
+            + Caltech patches as the deeper mining pool
 
-Usage (defaults give a good first run):
-    python tools/prepare_data.py
-        # = --face-source celeba --n-faces 10000 --resolution 24
-
-Or explicit:
-    python tools/prepare_data.py \\
-        --face-source celeba_aligned \\
-        --n-faces 10000 \\
-        --resolution 24 \\
-        --augment --jitter 2
-
-Note on stalls at startup: `load_dataset` always pings the HF Hub to check
-the cached commit is current — that single HTTP request has no progress bar
-and can hang for tens of seconds on slow links. Once you know the cache is
-fresh, skip the Hub check with:
-    HF_HUB_OFFLINE=1 HF_DATASETS_OFFLINE=1 python tools/prepare_data.py ...
+When `--face-source` overlaps with `--benchmark` (e.g. cbcl in both), val
+indices are reserved BEFORE training samples are drawn — no leakage.
 
 Output layout:
-    data/<res>/
-        train_pos.npy, val_pos.npy, test_pos.npy
-        caltech_pool.npy        # Hard-neg mining pool
-        cbcl_test_pos.npy, cbcl_test_neg.npy   # Academic benchmark
+    data/<resolution>_<face_source>/
+        train_pos.npy      # training positives
+        val_pos.npy        # benchmark-anchored val (calibration + stop)
+        test_pos.npy       # benchmark test positives (or absent if --benchmark none)
+        test_neg.npy       # benchmark test negatives
+        caltech_pool.npy   # mining pool for hard negatives
+        neg_seed.npy       # matched-domain stage-1 seed (when neg-source != caltech)
         manifest.json
+
+Usage:
+    python tools/prepare_data.py
+        # = --face-source celeba_aligned --benchmark cbcl --resolution 24 ...
+
+    python tools/prepare_data.py \\
+        --face-source celeba_aligned+cbcl --resolution 19 \\
+        --augment --jitter 2 \\
+        --benchmark cbcl --val-size 500 \\
+        --neg-source mixed --pool-size 50000000
+
+HF_HUB_OFFLINE=1 HF_DATASETS_OFFLINE=1 to skip the Hub freshness check on
+cached runs.
 """
 
 import argparse
@@ -51,8 +66,7 @@ DEFAULT_HF_REPO = "salvacarrion/face-detection"
 
 DEFAULT_N_FACES = 10000
 DEFAULT_RESOLUTION = 24
-DEFAULT_TRAIN_FRAC = 0.8
-DEFAULT_VAL_FRAC = 0.1
+DEFAULT_VAL_SIZE = 500
 DEFAULT_POOL_SIZE = 1_000_000
 DEFAULT_PATCHES_PER_IMAGE = 40
 
@@ -71,21 +85,18 @@ def jitter_crops(faces_big: np.ndarray, target_res: int, max_shift: int,
     `target_res + 2*max_shift`). The first N crops are the centered crop;
     the next N are random shifts in `[0, 2*max_shift]` per axis, per face.
 
-    The resulting array doubles the unique-face count without breaking the
-    pixel-aligned face structure that V-J relies on at small resolutions —
-    a 1-2 px shift on a 24×24 face is geometrically plausible (camera
-    jitter, alignment slack) and stays within the same Haar-feature
-    sub-grid.
+    Doubles unique-face count while preserving pixel alignment — a 1-2 px
+    shift on a 19×19 face is geometrically plausible (camera jitter,
+    alignment slack) and matches the `--detect-shift` of inference. Without
+    jitter the cascade is brittle to sub-pixel offsets.
     """
     n, big, _ = faces_big.shape
     assert big == target_res + 2 * max_shift, (
         f"jitter_crops expects faces of size {target_res + 2*max_shift}, "
         f"got {big}")
     out = np.empty((2 * n, target_res, target_res), dtype=faces_big.dtype)
-    # Variant 0: center crop
     c = max_shift
     out[:n] = faces_big[:, c:c + target_res, c:c + target_res]
-    # Variant 1: per-face random shift
     dxs = rng.integers(0, 2 * max_shift + 1, size=n)
     dys = rng.integers(0, 2 * max_shift + 1, size=n)
     for i in range(n):
@@ -95,52 +106,69 @@ def jitter_crops(faces_big: np.ndarray, target_res: int, max_shift: int,
 
 
 def gather_faces(ds_train, source: str, resolution: int, n_faces: int,
-                 rng: np.random.Generator) -> np.ndarray:
-    """Filter train split by source AND label==1, sample n_faces, return (N, res, res) uint8.
+                 rng: np.random.Generator,
+                 exclude_indices=None,
+                 return_indices: bool = False):
+    """Sample `n_faces` from `ds_train` where source==`source` AND label==1.
 
-    The label filter matters for sources that ship both faces and non-faces under
-    the same `source` tag (notably MIT CBCL: 2429 faces + 4548 non-faces in train).
-    Without it, ~65% of "cbcl" positives would actually be non-face patches.
+    The label filter matters for sources that ship both faces and non-faces
+    under the same `source` tag (MIT CBCL has 2429 faces + 4548 non-faces).
+
+    `exclude_indices`: optional set of indices (into the filtered subset) to
+    skip. Used to prevent leakage when the same source appears in both
+    `--face-source` (training) and `--benchmark` (val/test) — the val draw
+    happens first, marks its indices, and training excludes them.
+
+    Returns `arr` (or `(arr, picked_indices)` if `return_indices=True`).
+    Indices are into the *filtered* `source AND label==1` subset.
     """
     print(f"Filtering train split by source='{source}' AND label==1...")
     subset = ds_train.filter(lambda x: x["source"] == source and x["label"] == 1)
     n_avail = len(subset)
     print(f"\t- {n_avail:,} {source} faces available")
 
-    if n_faces > n_avail:
-        print(f"\t! requested {n_faces:,} but only {n_avail:,} available; capping")
-        n_faces = n_avail
+    if exclude_indices is not None and len(exclude_indices) > 0:
+        excl_set = set(int(i) for i in exclude_indices)
+        available = np.array([i for i in range(n_avail) if i not in excl_set],
+                             dtype=np.int64)
+        print(f"\t- excluding {len(excl_set):,} indices reserved for val "
+              f"(usable: {len(available):,})")
+    else:
+        available = np.arange(n_avail, dtype=np.int64)
 
-    pick = rng.choice(n_avail, size=n_faces, replace=False)
-    pick.sort()  # sequential reads are faster than random
-    arr = np.empty((n_faces, resolution, resolution), dtype=np.uint8)
-    for out_idx, in_idx in enumerate(tqdm(pick, desc=f"{source} crops", unit="img")):
+    n_pick = min(n_faces, len(available))
+    if n_pick < n_faces:
+        print(f"\t! requested {n_faces:,} but only {len(available):,} "
+              f"usable; capping to {n_pick:,}")
+
+    pick = rng.choice(available, size=n_pick, replace=False)
+    pick.sort()  # sequential reads on the HF dataset are faster than random
+
+    arr = np.empty((n_pick, resolution, resolution), dtype=np.uint8)
+    for out_idx, in_idx in enumerate(tqdm(pick, desc=f"{source} crops",
+                                          unit="img")):
         arr[out_idx] = _to_gray(subset[int(in_idx)]["image"], resolution)
+
+    if return_indices:
+        return arr, pick
     return arr
 
 
-def split_three_way(n: int, train_frac: float, val_frac: float,
-                    rng: np.random.Generator):
-    perm = rng.permutation(n)
-    n_train = int(n * train_frac)
-    n_val = int(n * val_frac)
-    return perm[:n_train], perm[n_train:n_train + n_val], perm[n_train + n_val:]
+def gather_benchmark_negatives(ds_train, benchmark: str, resolution: int,
+                               augment: bool = False) -> np.ndarray:
+    """Non-face crops from the benchmark source's train split.
 
-
-def gather_cbcl_negatives(ds_train, resolution: int,
-                          augment: bool = False) -> np.ndarray:
-    """Load CBCL non-face crops (`source=='cbcl' AND label==0`) from the train split.
-
-    These are 19×19 patches curated to be face-like — the matched-domain seed
-    pool for stage 1. Resized to `resolution` if different from native.
-    Returned as (N, R, R) uint8.
+    These are the matched-domain stage-1 seed pool. For CBCL, ~4548 crops
+    curated to look face-like — the cascade learns to reject benchmark-style
+    non-faces from the first stage instead of waiting until hard-neg mining
+    eventually finds them in random Caltech patches.
     """
-    print("Filtering train split by source='cbcl' AND label==0 (non-faces)...")
-    subset = ds_train.filter(lambda x: x["source"] == "cbcl" and x["label"] == 0)
+    print(f"Filtering train split by source='{benchmark}' AND label==0 (non-faces)...")
+    subset = ds_train.filter(lambda x: x["source"] == benchmark and x["label"] == 0)
     n = len(subset)
-    print(f"\t- {n:,} CBCL non-faces available")
+    print(f"\t- {n:,} {benchmark} non-faces available")
     arr = np.empty((n, resolution, resolution), dtype=np.uint8)
-    for i, row in enumerate(tqdm(subset, desc="cbcl non-faces", unit="img")):
+    for i, row in enumerate(tqdm(subset, desc=f"{benchmark} non-faces", unit="img")):
         arr[i] = _to_gray(row["image"], resolution)
     if augment:
         arr = np.concatenate([arr, arr[:, :, ::-1]], axis=0)
@@ -151,60 +179,86 @@ def gather_cbcl_negatives(ds_train, resolution: int,
 def build_caltech_pool(ds_negatives, resolution: int, n_patches: int,
                        patches_per_image: int,
                        rng: np.random.Generator) -> np.ndarray:
-    """Sample random patches from Caltech color JPGs at the target resolution.
+    """Sample random patches from Caltech-256 grayscale at the target resolution.
 
-    Filters to `source=='caltech'` so we don't accidentally pick up CBCL
-    19×19 non-face crops as if they were Caltech images — they live in the
-    same split now and would silently corrupt the pool.
+    Multi-pass: walks the (shuffled) image set repeatedly and pulls
+    `patches_per_image` fresh random crops per image per pass. Each pass
+    re-permutes and re-randomizes offsets, so duplicate patches across
+    passes are unlikely (a 300×300 image has ~80k unique 19×19 positions —
+    far more than we sample). Stops when `n_patches` is reached or no usable
+    image remains (every image smaller than `resolution`).
     """
     print(f"Building Caltech pool: {n_patches:,} patches @ {resolution}×{resolution}")
     ds_caltech = ds_negatives.filter(lambda x: x["source"] == "caltech")
-    print(f"\t- {len(ds_caltech):,} Caltech source images available")
     n_imgs = len(ds_caltech)
-    order = rng.permutation(n_imgs)
+    print(f"\t- {n_imgs:,} Caltech source images available "
+          f"(~{n_imgs * patches_per_image:,} patches/pass)")
 
     pool = np.empty((n_patches, resolution, resolution), dtype=np.uint8)
     filled = 0
-    skipped = 0
+    skipped_total = 0
     pbar = tqdm(total=n_patches, desc="Caltech pool", unit="patch")
 
-    for idx in order:
-        if filled >= n_patches:
+    pass_idx = 0
+    while filled < n_patches:
+        progress_start = filled
+        order = rng.permutation(n_imgs)
+        pass_idx += 1
+        for idx in order:
+            if filled >= n_patches:
+                break
+            pil = ds_caltech[int(idx)]["image"]
+            if pil.mode != "L":
+                pil = pil.convert("L")
+            iw, ih = pil.size
+            if iw < resolution or ih < resolution:
+                if pass_idx == 1:
+                    skipped_total += 1
+                continue
+            arr = np.asarray(pil, dtype=np.uint8)
+            n = min(patches_per_image, n_patches - filled)
+            for _ in range(n):
+                x = int(rng.integers(0, iw - resolution + 1))
+                y = int(rng.integers(0, ih - resolution + 1))
+                pool[filled] = arr[y:y + resolution, x:x + resolution]
+                filled += 1
+                pbar.update(1)
+        if filled == progress_start:
+            print(f"\t! pass {pass_idx}: no usable images, stopping early")
             break
-        pil = ds_caltech[int(idx)]["image"]
-        if pil.mode != "L":
-            pil = pil.convert("L")
-        iw, ih = pil.size
-        if iw < resolution or ih < resolution:
-            skipped += 1
-            continue
-        arr = np.asarray(pil, dtype=np.uint8)
-        n = min(patches_per_image, n_patches - filled)
-        for _ in range(n):
-            x = int(rng.integers(0, iw - resolution + 1))
-            y = int(rng.integers(0, ih - resolution + 1))
-            pool[filled] = arr[y:y + resolution, x:x + resolution]
-            filled += 1
-            pbar.update(1)
 
     pbar.close()
-    if skipped:
-        print(f"\t- skipped {skipped} images smaller than {resolution}px")
+    if pass_idx > 1:
+        print(f"\t- completed {pass_idx} passes over the image set")
+    if skipped_total:
+        print(f"\t- skipped {skipped_total} images smaller than {resolution}px")
     if filled < n_patches:
         print(f"\t! only filled {filled:,}/{n_patches:,} patches")
         pool = pool[:filled]
     return pool
 
 
-def gather_cbcl_test(ds_test, resolution: int):
-    """Return (cbcl_test_pos, cbcl_test_neg) uint8 arrays at the target resolution."""
-    print("Loading CBCL test split (academic benchmark)...")
+def gather_benchmark_test(ds_test, benchmark: str, resolution: int):
+    """Load (test_pos, test_neg) from the benchmark's HF test split.
+
+    The current HF dataset's "test" split is CBCL-only, so for `benchmark`
+    other than 'cbcl' this may return empty arrays. When we add other
+    benchmarks (FDDB, WIDER), this is where their test split would plug in.
+    """
+    print(f"Loading benchmark test split ('{benchmark}')...")
     pos_imgs, neg_imgs = [], []
-    for row in tqdm(ds_test, desc="CBCL test", unit="img"):
+    for row in tqdm(ds_test, desc=f"{benchmark} test", unit="img"):
+        # Filter by source when the test split has one (defensive — when only
+        # one benchmark lives in test, the field may be absent).
+        src = row.get("source", benchmark)
+        if src != benchmark:
+            continue
         target = pos_imgs if row["label"] == 1 else neg_imgs
         target.append(_to_gray(row["image"], resolution))
-    pos = np.stack(pos_imgs, axis=0) if pos_imgs else np.empty((0, resolution, resolution), dtype=np.uint8)
-    neg = np.stack(neg_imgs, axis=0) if neg_imgs else np.empty((0, resolution, resolution), dtype=np.uint8)
+    pos = (np.stack(pos_imgs) if pos_imgs
+           else np.empty((0, resolution, resolution), dtype=np.uint8))
+    neg = (np.stack(neg_imgs) if neg_imgs
+           else np.empty((0, resolution, resolution), dtype=np.uint8))
     return pos, neg
 
 
@@ -212,70 +266,71 @@ def main():
     ap = argparse.ArgumentParser(
         description=__doc__,
         formatter_class=argparse.RawDescriptionHelpFormatter)
+    # --- Training positives ---
     ap.add_argument("--face-source", default="celeba_aligned",
-                    help="Face dataset(s) to train on. Single source: "
+                    help="Source(s) for TRAINING positives. Single source: "
                          "'celeba', 'celeba_aligned', or 'cbcl'. Multi-source: "
-                         "'+'-separated, e.g. 'celeba_aligned+cbcl' to combine "
-                         "50K CelebA-aligned faces + 2.4K CBCL faces at 24×24 "
-                         "(both share the CBCL-canonical eye geometry — they "
-                         "stack cleanly without alignment mismatch). "
-                         "`--n-faces` is the per-source cap; the sum is used. "
-                         "(default: celeba)")
+                         "'+'-separated (e.g. 'celeba_aligned+cbcl'). "
+                         "`--n-faces` is the per-source cap.")
     ap.add_argument("--n-faces", type=int, default=DEFAULT_N_FACES,
-                    help=f"Faces to sample from source (default: {DEFAULT_N_FACES:,}).")
+                    help=f"Per-source faces to sample for training "
+                         f"(default: {DEFAULT_N_FACES:,}). Auto-caps to source size.")
     ap.add_argument("--resolution", type=int, default=DEFAULT_RESOLUTION,
-                    help=f"Target square resolution in px (default: {DEFAULT_RESOLUTION}).")
-    ap.add_argument("--train-frac", type=float, default=DEFAULT_TRAIN_FRAC,
-                    help=f"Train fraction (default: {DEFAULT_TRAIN_FRAC}).")
-    ap.add_argument("--val-frac", type=float, default=DEFAULT_VAL_FRAC,
-                    help=f"Val fraction; test = 1 - train - val (default: {DEFAULT_VAL_FRAC}).")
+                    help=f"Square crop side in px (default: {DEFAULT_RESOLUTION}).")
     ap.add_argument("--augment", action="store_true",
-                    help="Add horizontal-flip mirrors to training positives only.")
-    ap.add_argument("--no-augment-val", action="store_true",
-                    help="Skip h-flip augmentation on val_pos even when --augment "
-                         "is set. Use when val is large enough for stable 99-th "
-                         "percentile calibration without mirror pairs (≥~500 "
-                         "unique faces) and you suspect calibration overfit due "
-                         "to correlated h-flip pairs.")
+                    help="H-flip augmentation on training positives only "
+                         "(val and test stay un-augmented).")
     ap.add_argument("--jitter", type=int, default=0,
-                    help="Shift-jitter augmentation: max pixel shift (default: 0 "
-                         "= disabled). When > 0, faces are gathered at "
-                         "(resolution + 2*jitter) and each one yields TWO crops: "
-                         "a center crop and one with a random ±jitter-px offset. "
-                         "Doubles unique-face count while preserving pixel "
-                         "alignment, which is critical for V-J at small "
-                         "resolutions (see README on alignment).")
+                    help="Shift-jitter on training positives: max pixel shift "
+                         "(default: 0). Faces gathered at (resolution + 2*jitter), "
+                         "yielding TWO crops per face — center + random offset. "
+                         "Critical at 19×19 to teach robustness to ±jitter px "
+                         "alignment slack at inference time (sliding-window step). "
+                         "Val/test never get jitter — they must match the "
+                         "un-augmented benchmark distribution.")
+    # --- Benchmark (val + test) ---
+    ap.add_argument("--benchmark", default="cbcl",
+                    help="Benchmark used for BOTH val and test (default: cbcl). "
+                         "Val: `--val-size` faces sampled from the benchmark's "
+                         "HF train split, un-augmented — used for per-stage "
+                         "threshold calibration and cumulative-recall stopping. "
+                         "Test: from the benchmark's HF test split, untouched. "
+                         "Set to 'none' to skip val/test entirely (train-only).")
+    ap.add_argument("--val-size", type=int, default=DEFAULT_VAL_SIZE,
+                    help=f"Number of validation faces sampled from the benchmark "
+                         f"(default: {DEFAULT_VAL_SIZE}). Used un-augmented for "
+                         f"per-stage calibration. When face-source overlaps with "
+                         f"benchmark, these indices are excluded from training "
+                         f"to prevent leakage.")
+    # --- Negatives ---
     ap.add_argument("--pool-size", type=int, default=DEFAULT_POOL_SIZE,
                     help=f"Caltech patches to extract (default: {DEFAULT_POOL_SIZE:,}).")
     ap.add_argument("--patches-per-image", type=int, default=DEFAULT_PATCHES_PER_IMAGE,
-                    help=f"Random crops per Caltech image (default: {DEFAULT_PATCHES_PER_IMAGE}).")
-    ap.add_argument("--neg-source", choices=["caltech", "cbcl", "mixed"],
-                    default="caltech",
+                    help=f"Random crops per Caltech image per pass "
+                         f"(default: {DEFAULT_PATCHES_PER_IMAGE}). Pool builder "
+                         f"loops over the image set as many times as needed to "
+                         f"reach --pool-size, re-randomizing offsets each pass.")
+    ap.add_argument("--neg-source", choices=["caltech", "benchmark", "mixed"],
+                    default="mixed",
                     help="Negative pool source. "
-                         "'caltech' (default): random patches from Caltech-256 — "
-                         "diverse but easy. "
-                         "'cbcl': CBCL non-face crops from the train split (~4548) — "
-                         "matched-domain but small, will exhaust after a few stages. "
-                         "'mixed' (recommended for CBCL benchmark): CBCL non-faces "
-                         "as the stage-1 seed (matched) + Caltech patches for "
-                         "deeper hard-negative mining (diverse).")
-    ap.add_argument("--include-cbcl-test", action="store_true", default=True,
-                    help="Bundle CBCL test as cbcl_test_*.npy (default: on).")
-    ap.add_argument("--no-include-cbcl-test", dest="include_cbcl_test",
-                    action="store_false")
+                         "'caltech': random patches from Caltech-256 — diverse but easy. "
+                         "'benchmark': benchmark non-faces only (matched, small, "
+                         "will exhaust after a few stages). "
+                         "'mixed' (recommended, default): benchmark non-faces as the "
+                         "stage-1 seed (matched-domain) + Caltech patches for deeper "
+                         "hard-negative mining (diverse).")
+    # --- Misc ---
     ap.add_argument("--repo-id", default=DEFAULT_HF_REPO,
                     help=f"HF dataset repo id (default: {DEFAULT_HF_REPO}).")
     ap.add_argument("--out-dir", type=Path, default=None,
-                    help="Output dir (default: data/<resolution>/).")
+                    help="Output dir. Default: data/<resolution>_<face-source>/ "
+                         "(e.g. data/19_cbcl/, data/19_celeba_aligned+cbcl/). "
+                         "Override with this flag for shorter aliases like "
+                         "data/19_celeba/.")
     ap.add_argument("--seed", type=int, default=42)
     args = ap.parse_args()
 
-    test_frac = 1.0 - args.train_frac - args.val_frac
-    if test_frac <= 0:
-        ap.error(f"train_frac + val_frac must be < 1 "
-                 f"(got {args.train_frac + args.val_frac}).")
-
-    # Parse multi-source spec (e.g. 'celeba+cbcl' → ['celeba', 'cbcl'])
+    # --- Validate flags ---
     valid_sources = {"celeba", "celeba_aligned", "cbcl"}
     face_sources = [s.strip() for s in args.face_source.split("+") if s.strip()]
     bad = [s for s in face_sources if s not in valid_sources]
@@ -284,183 +339,159 @@ def main():
     if not face_sources:
         ap.error("--face-source must list at least one source")
 
+    benchmark = args.benchmark.lower() if args.benchmark else "none"
+    if benchmark == "none":
+        benchmark = None
+    elif benchmark not in valid_sources:
+        ap.error(f"unknown benchmark: {benchmark!r}. "
+                 f"valid: {sorted(valid_sources)} or 'none'")
+
+    if args.neg_source in ("benchmark", "mixed") and benchmark is None:
+        ap.error(f"--neg-source {args.neg_source} requires --benchmark != none "
+                 f"(needs benchmark non-faces as seed)")
+
     rng = np.random.default_rng(args.seed)
-    out_dir = args.out_dir or DEFAULT_OUT_BASE / str(args.resolution)
+    out_dir = args.out_dir or DEFAULT_OUT_BASE / f"{args.resolution}_{args.face_source}"
     out_dir.mkdir(parents=True, exist_ok=True)
 
     print(f"== Preparing data @ {args.resolution}×{args.resolution} → {out_dir}/")
-    print(f"   face_source={args.face_source}  neg_source={args.neg_source}  "
-          f"n_faces={args.n_faces:,}  "
-          f"split={args.train_frac:.2f}/{args.val_frac:.2f}/{test_frac:.2f}  "
+    print(f"   face_source={args.face_source}  benchmark={benchmark or 'none'}  "
+          f"val_size={args.val_size}  neg_source={args.neg_source}  "
           f"augment={args.augment}  jitter={args.jitter}")
     print(f"   HF repo: {args.repo_id}")
 
-    # ---- Load HF dataset (downloads on first call, cached afterwards) ----
-    # Even when fully cached, load_dataset pings the Hub to verify the local
-    # commit hash is current — that one HTTP call has no tqdm and can stall
-    # for tens of seconds. Set HF_HUB_OFFLINE=1 to skip it.
-    print("\nLoading HF dataset (checking Hub for updates, may stall on slow network)...")
+    # --- Load HF dataset (may stall briefly on Hub freshness check) ---
+    print("\nLoading HF dataset...")
     ds = load_dataset(args.repo_id)
     print(f"\nLoaded HF dataset:  {dict({s: len(ds[s]) for s in ds})}")
 
-    # ---- Faces: gather unique → split → jitter per split ----
-    # IMPORTANT: split on UNIQUE-face indices, not on post-jitter copies.
-    # If we jittered first and split second, the same face could end up in
-    # both train (centered crop) and val (shifted crop), leaking labels.
+    # =====================================================================
+    # 1) VAL — sampled from benchmark FIRST so we can exclude its indices
+    #          when gathering training positives (no leakage).
+    # =====================================================================
+    val_pos = None
+    val_indices_used = None
+    if benchmark is not None:
+        print(f"\n[1/5] Sampling val set: {args.val_size} {benchmark} faces "
+              f"(un-augmented, center crop)...")
+        val_pos, val_indices_used = gather_faces(
+            ds["train"], benchmark, args.resolution, args.val_size, rng,
+            return_indices=True)
+        print(f"   val_pos: {len(val_pos):,} faces "
+              f"(used as calibration + stop-criterion anchor)")
+
+    # =====================================================================
+    # 2) TRAIN positives — from face_source(s), with augment+jitter
+    #    If a face source matches `benchmark`, exclude val indices.
+    # =====================================================================
+    print(f"\n[2/5] Gathering training positives from {face_sources}...")
     if args.jitter > 0:
         gather_res = args.resolution + 2 * args.jitter
-        print(f"Jitter active: gathering at {gather_res}×{gather_res}, will "
-              f"yield 2 crops per face at {args.resolution}×{args.resolution}")
+        print(f"   Jitter={args.jitter}: gathering at {gather_res}×{gather_res} "
+              f"to enable center+shift expansion.")
     else:
         gather_res = args.resolution
 
-    # Multi-source: gather independently from each, then concatenate. Each
-    # source gets up to `--n-faces`; total = sum (capped by availability).
     parts = []
-    source_ids_parts = []
-    for src_i, src in enumerate(face_sources):
-        arr = gather_faces(ds["train"], src, gather_res, args.n_faces, rng)
-        print(f"   {src}: {len(arr):,} faces gathered")
+    for src in face_sources:
+        excl = val_indices_used if (src == benchmark and val_indices_used is not None) else None
+        arr = gather_faces(ds["train"], src, gather_res, args.n_faces, rng,
+                           exclude_indices=excl)
+        print(f"   {src}: {len(arr):,} faces")
         parts.append(arr)
-        source_ids_parts.append(np.full(len(arr), src_i, dtype=np.int32))
-    faces_unique = np.concatenate(parts, axis=0) if len(parts) > 1 else parts[0]
-    source_ids = np.concatenate(source_ids_parts) if len(source_ids_parts) > 1 else source_ids_parts[0]
+    train_pos = np.concatenate(parts, axis=0) if len(parts) > 1 else parts[0]
     if len(face_sources) > 1:
-        # Shuffle so split is balanced across sources, not "all-celeba then all-cbcl"
-        perm = rng.permutation(len(faces_unique))
-        faces_unique = faces_unique[perm]
-        source_ids = source_ids[perm]
-        print(f"   combined+shuffled: {len(faces_unique):,} faces "
-              f"from {len(face_sources)} sources")
-    n = len(faces_unique)
-    train_idx, val_idx, test_idx = split_three_way(
-        n, args.train_frac, args.val_frac, rng)
-    val_source_ids = source_ids[val_idx]
+        perm = rng.permutation(len(train_pos))
+        train_pos = train_pos[perm]
+        print(f"   combined+shuffled: {len(train_pos):,} faces across "
+              f"{len(face_sources)} sources")
 
     if args.jitter > 0:
-        train_pos = jitter_crops(faces_unique[train_idx], args.resolution,
-                                 args.jitter, rng)
-        val_pos   = jitter_crops(faces_unique[val_idx],   args.resolution,
-                                 args.jitter, rng)
-        test_pos  = jitter_crops(faces_unique[test_idx],  args.resolution,
-                                 args.jitter, rng)
-        print(f"   shift-jitter expansion: train {len(train_idx):,} → "
-              f"{len(train_pos):,}, val {len(val_idx):,} → {len(val_pos):,}")
-    else:
-        train_pos = faces_unique[train_idx]
-        val_pos   = faces_unique[val_idx]
-        test_pos  = faces_unique[test_idx]
-
+        train_pos = jitter_crops(train_pos, args.resolution, args.jitter, rng)
+        print(f"   Jitter expansion: → {len(train_pos):,} (center + shifted)")
     if args.augment:
         train_pos = np.concatenate([train_pos, train_pos[:, :, ::-1]], axis=0)
-        print(f"   Augmented train_pos with h-flips → {len(train_pos):,}")
-        # Augment val too — calibration needs a stable 99-th percentile of
-        # positive scores, and 200-ish samples is too few for that. Augmenting
-        # only train and not val left the cascade calibrated against an
-        # easier-than-test val set, which compounded into ~40pp recall drop
-        # across 4 stages on the CBCL benchmark. With --no-augment-val you
-        # opt out — only safe when val has enough unique faces on its own
-        # (jitter doubles it; 400-500+ samples is usually fine).
-        if not args.no_augment_val:
-            val_pos = np.concatenate([val_pos, val_pos[:, :, ::-1]], axis=0)
-            print(f"   Augmented val_pos   with h-flips → {len(val_pos):,}")
-        else:
-            print(f"   val_pos h-flip skipped (--no-augment-val) → {len(val_pos):,}")
+        print(f"   H-flip augment: → {len(train_pos):,}")
 
-    # ---- Val calibration subset (multi-source with CBCL only) ----
-    # When training celeba+cbcl, calibrate() must see only CBCL val faces so
-    # that CelebA outliers (lower scores due to alignment gap) don't drag every
-    # stage's threshold down, which opens the gate for non-faces at test time.
-    val_cbcl_pos = None
-    if 'cbcl' in face_sources and len(face_sources) > 1:
-        cbcl_src_idx = face_sources.index('cbcl')
-        cbcl_in_val = (val_source_ids == cbcl_src_idx)
-        val_unique_cbcl = faces_unique[val_idx][cbcl_in_val]
-        if len(val_unique_cbcl) > 0:
-            if args.jitter > 0:
-                val_cbcl_pos = jitter_crops(val_unique_cbcl, args.resolution,
-                                            args.jitter, rng)
-            else:
-                val_cbcl_pos = val_unique_cbcl.copy()
-            if args.augment and not args.no_augment_val:
-                val_cbcl_pos = np.concatenate([val_cbcl_pos, val_cbcl_pos[:, :, ::-1]])
-            print(f"   val_cbcl_pos: {len(val_cbcl_pos):,} (CBCL-only calibration subset)")
-
-    # ---- Negative pool(s) ----
-    # `caltech_pool.npy` is the canonical mining pool (main.py expects this name).
-    # `cbcl_neg_seed.npy` is an optional matched-domain seed pool. When present,
-    # main.py passes it to ViolaJones.train as the stage-1 seed instead of
-    # sampling stage 1 from the broad Caltech pool — fixes the FDDB/Caltech →
-    # CBCL benchmark domain gap that produces low specificity.
-    cbcl_neg_seed = None
+    # =====================================================================
+    # 3) NEGATIVE POOLS — Caltech for mining + optional benchmark seed
+    # =====================================================================
+    print(f"\n[3/5] Building negative pools (neg-source={args.neg_source})...")
+    neg_seed = None
     caltech_pool = None
     if args.neg_source == "caltech":
         caltech_pool = build_caltech_pool(
             ds["negatives"], args.resolution, args.pool_size,
             args.patches_per_image, rng)
-    elif args.neg_source == "cbcl":
-        # Use CBCL non-faces as both seed AND mining pool. Pool will exhaust
-        # after a few stages (only ~4548, ~9k augmented) — that's expected.
-        cbcl_neg = gather_cbcl_negatives(ds["train"], args.resolution,
-                                         augment=args.augment)
-        cbcl_neg_seed = cbcl_neg
-        caltech_pool = cbcl_neg  # Same array as the "pool" too, so main.py works
+    elif args.neg_source == "benchmark":
+        bench_neg = gather_benchmark_negatives(
+            ds["train"], benchmark, args.resolution, augment=args.augment)
+        # Use the same array as both seed and the main mining pool. It'll
+        # exhaust after a few stages — expected for `benchmark` mode.
+        neg_seed = bench_neg
+        caltech_pool = bench_neg
     elif args.neg_source == "mixed":
-        cbcl_neg_seed = gather_cbcl_negatives(ds["train"], args.resolution,
-                                              augment=args.augment)
+        neg_seed = gather_benchmark_negatives(
+            ds["train"], benchmark, args.resolution, augment=args.augment)
         caltech_pool = build_caltech_pool(
             ds["negatives"], args.resolution, args.pool_size,
             args.patches_per_image, rng)
 
-    # ---- CBCL benchmark (optional) ----
-    cbcl_pos = cbcl_neg = None
-    if args.include_cbcl_test:
-        cbcl_pos, cbcl_neg = gather_cbcl_test(ds["test"], args.resolution)
+    # =====================================================================
+    # 4) TEST — from benchmark test split (untouched)
+    # =====================================================================
+    test_pos = test_neg = None
+    if benchmark is not None:
+        print(f"\n[4/5] Loading test set ({benchmark} test split)...")
+        test_pos, test_neg = gather_benchmark_test(
+            ds["test"], benchmark, args.resolution)
+        print(f"   test_pos: {len(test_pos):,} faces, "
+              f"test_neg: {len(test_neg):,} non-faces")
+    else:
+        print("\n[4/5] Skipping test set (--benchmark none)")
 
-    # ---- Save ----
-    print("\nSaving bundles...")
-    np.save(out_dir / "train_pos.npy",    train_pos)
-    np.save(out_dir / "val_pos.npy",      val_pos)
-    np.save(out_dir / "test_pos.npy",     test_pos)
+    # =====================================================================
+    # 5) SAVE bundles + manifest
+    # =====================================================================
+    print(f"\n[5/5] Saving bundles to {out_dir}/...")
+    np.save(out_dir / "train_pos.npy", train_pos)
+    if val_pos is not None:
+        np.save(out_dir / "val_pos.npy", val_pos)
+    elif (out_dir / "val_pos.npy").exists():
+        (out_dir / "val_pos.npy").unlink()  # stale from previous run
     np.save(out_dir / "caltech_pool.npy", caltech_pool)
-    cbcl_seed_path = out_dir / "cbcl_neg_seed.npy"
-    if cbcl_neg_seed is not None:
-        np.save(cbcl_seed_path, cbcl_neg_seed)
-    elif cbcl_seed_path.exists():
-        # Stale seed from a previous --neg-source run would silently bias
-        # training; remove it when this run doesn't produce one.
-        cbcl_seed_path.unlink()
-    val_cbcl_path = out_dir / "val_cbcl_pos.npy"
-    if val_cbcl_pos is not None:
-        np.save(val_cbcl_path, val_cbcl_pos)
-    elif val_cbcl_path.exists():
-        val_cbcl_path.unlink()
-    if cbcl_pos is not None:
-        np.save(out_dir / "cbcl_test_pos.npy", cbcl_pos)
-        np.save(out_dir / "cbcl_test_neg.npy", cbcl_neg)
+    neg_seed_path = out_dir / "neg_seed.npy"
+    if neg_seed is not None:
+        np.save(neg_seed_path, neg_seed)
+    elif neg_seed_path.exists():
+        neg_seed_path.unlink()
+    if test_pos is not None and len(test_pos) > 0:
+        np.save(out_dir / "test_pos.npy", test_pos)
+        np.save(out_dir / "test_neg.npy", test_neg)
+    else:
+        for p in (out_dir / "test_pos.npy", out_dir / "test_neg.npy"):
+            if p.exists():
+                p.unlink()
 
     manifest = {
         "resolution": args.resolution,
         "seed": args.seed,
         "face_source": args.face_source,
         "face_sources_parsed": face_sources,
+        "benchmark": benchmark,
+        "val_size": int(args.val_size) if benchmark else 0,
         "neg_source": args.neg_source,
-        "n_faces_sampled": int(n),
-        "train_frac": args.train_frac,
-        "val_frac": args.val_frac,
-        "test_frac": test_frac,
+        "n_faces_per_source": args.n_faces,
         "augment": bool(args.augment),
         "jitter": int(args.jitter),
         "repo_id": args.repo_id,
         "counts": {
-            "train_pos":      int(len(train_pos)),
-            "val_pos":        int(len(val_pos)),
-            "test_pos":       int(len(test_pos)),
-            "caltech_pool":   int(len(caltech_pool)),
-            "cbcl_neg_seed":  int(len(cbcl_neg_seed)) if cbcl_neg_seed is not None else 0,
-            "val_cbcl_pos":   int(len(val_cbcl_pos))  if val_cbcl_pos  is not None else 0,
-            "cbcl_test_pos":  int(len(cbcl_pos)) if cbcl_pos is not None else 0,
-            "cbcl_test_neg":  int(len(cbcl_neg)) if cbcl_neg is not None else 0,
+            "train_pos":    int(len(train_pos)),
+            "val_pos":      int(len(val_pos)) if val_pos is not None else 0,
+            "test_pos":     int(len(test_pos)) if test_pos is not None else 0,
+            "test_neg":     int(len(test_neg)) if test_neg is not None else 0,
+            "caltech_pool": int(len(caltech_pool)),
+            "neg_seed":     int(len(neg_seed)) if neg_seed is not None else 0,
         },
         "generated_at": time.strftime("%Y-%m-%d %H:%M:%S"),
     }
@@ -470,7 +501,7 @@ def main():
     print(f"\n== Done → {out_dir}/")
     for k, v in manifest["counts"].items():
         if v:
-            print(f"   {k:18s}: {v:,}")
+            print(f"   {k:14s}: {v:,}")
     print(f"\nNext: python main.py train --data-dir {out_dir}")
 
 

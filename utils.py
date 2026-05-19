@@ -233,16 +233,22 @@ def draw_bounding_boxes(pil_image, regions, color="green", thickness=3):
 def non_maximum_supression(regions, threshold=0.3, mode="weighted",
                            metric="hybrid", iom_threshold=0.7):
     """
-    Non-maximum suppression with two cluster strategies and three overlap
-    metrics. Defaults are tuned for V-J multi-scale face detection.
+    Connected-components NMS with three overlap metrics. Defaults are
+    tuned for V-J multi-scale face detection.
+
+    Builds the full pairwise fuse graph (i~j iff they overlap by the
+    chosen metric) and treats each connected component as one cluster.
+    This removes the order-dependence of classic greedy NMS — where a
+    partial-overlap box can "use up" a nested duplicate before its
+    parent gets compared, leaving both in the output.
 
     `mode`:
-      'greedy'   - keep highest-scoring box, drop overlapping, repeat.
-      'weighted' - fuse cluster of overlapping boxes into ONE
-                   score-weighted-average box (default; cleaner output
-                   when the same face fires at multiple scales).
+      'greedy'   - emit the highest-scoring box of each component.
+      'weighted' - fuse each component into ONE score-weighted-average
+                   box (default; cleaner output when the same face
+                   fires at multiple scales).
 
-    `metric` controls when boxes are considered "overlapping":
+    `metric` controls when two boxes are considered "overlapping":
       'iou'    - intersection over union > `threshold`. Standard but
                  over-conservative for nested boxes at very different
                  scales (a 24×24 box fully inside a 48×48 box has IoU
@@ -263,44 +269,55 @@ def non_maximum_supression(regions, threshold=0.3, mode="weighted",
     boxes = np.asarray(regions, dtype=np.float64)
     if len(boxes) == 0:
         return []
+    n = len(boxes)
     has_score = boxes.shape[1] >= 5
-    scores = boxes[:, 4] if has_score else np.zeros(len(boxes))
+    scores = boxes[:, 4] if has_score else np.zeros(n)
 
     x1 = boxes[:, 0]; y1 = boxes[:, 1]
     x2 = boxes[:, 2]; y2 = boxes[:, 3]
     areas = (x2 - x1 + 1) * (y2 - y1 + 1)
 
-    order = np.argsort(-scores) if has_score else np.argsort(y2)
-    used = np.zeros(len(boxes), dtype=bool)
+    # Full n×n pairwise overlap. Inputs to NMS are post-cascade survivors
+    # (~10²–10³ boxes), so the n² matrix is small.
+    xx1 = np.maximum(x1[:, None], x1[None, :])
+    yy1 = np.maximum(y1[:, None], y1[None, :])
+    xx2 = np.minimum(x2[:, None], x2[None, :])
+    yy2 = np.minimum(y2[:, None], y2[None, :])
+    w = np.maximum(0.0, xx2 - xx1 + 1)
+    h = np.maximum(0.0, yy2 - yy1 + 1)
+    inter = w * h
+    union = areas[:, None] + areas[None, :] - inter
+    iou = np.where(union > 0, inter / union, 0.0)
+    min_area = np.minimum(areas[:, None], areas[None, :])
+    iom = np.where(min_area > 0, inter / min_area, 0.0)
 
+    if metric == "iou":
+        fuse_mat = iou > threshold
+    elif metric == "iom":
+        fuse_mat = iom > threshold
+    else:  # hybrid
+        fuse_mat = (iou > threshold) | (iom > iom_threshold)
+
+    # Union-find over the upper triangle of fuse_mat.
+    parent = np.arange(n)
+
+    def find(a):
+        while parent[a] != a:
+            parent[a] = parent[parent[a]]
+            a = parent[a]
+        return a
+
+    ii, jj = np.where(np.triu(fuse_mat, k=1))
+    for a, b in zip(ii.tolist(), jj.tolist()):
+        ra, rb = find(a), find(b)
+        if ra != rb:
+            parent[ra] = rb
+
+    roots = np.array([find(i) for i in range(n)])
     out = []
-    for idx in order:
-        if used[idx]:
-            continue
-        remaining = np.where(~used)[0]
-        xx1 = np.maximum(x1[idx], x1[remaining])
-        yy1 = np.maximum(y1[idx], y1[remaining])
-        xx2 = np.minimum(x2[idx], x2[remaining])
-        yy2 = np.minimum(y2[idx], y2[remaining])
-        w = np.maximum(0.0, xx2 - xx1 + 1)
-        h = np.maximum(0.0, yy2 - yy1 + 1)
-        inter = w * h
-        union = areas[idx] + areas[remaining] - inter
-        iou = np.where(union > 0, inter / union, 0.0)
-        min_area = np.minimum(areas[idx], areas[remaining])
-        iom = np.where(min_area > 0, inter / min_area, 0.0)
-
-        if metric == "iou":
-            fuse = iou > threshold
-        elif metric == "iom":
-            fuse = iom > threshold
-        else:  # hybrid
-            fuse = (iou > threshold) | (iom > iom_threshold)
-
-        cluster = remaining[fuse]
-        used[cluster] = True
-
-        if mode == "weighted" and has_score and len(cluster) > 0:
+    for root in np.unique(roots):
+        cluster = np.where(roots == root)[0]
+        if mode == "weighted" and has_score:
             s = scores[cluster]
             wn = s / s.sum() if s.sum() > 0 else np.full_like(s, 1.0 / len(s))
             cx1 = float((wn * x1[cluster]).sum())
@@ -310,7 +327,8 @@ def non_maximum_supression(regions, threshold=0.3, mode="weighted",
             cs  = float(s.max())
             out.append((cx1, cy1, cx2, cy2, cs))
         else:
-            out.append(tuple(boxes[idx]))
+            best = cluster[np.argmax(scores[cluster])] if has_score else cluster[0]
+            out.append(tuple(boxes[best]))
 
     arr = np.asarray(out, dtype=np.float64)
     if has_score:

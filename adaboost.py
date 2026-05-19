@@ -23,6 +23,12 @@ class AdaBoost:
         # `calibrate()` lowers this so the layer keeps ~all training faces — see
         # §4.2 of Viola & Jones (2001).
         self.threshold = 0.5
+        # Operating-point FPR/recall at end of training (in calibrated mode).
+        # The cascade uses these to detect "stage capped without satisfying
+        # target_stage_fpr" — i.e. the cascade hit its capacity ceiling. None
+        # in fixed-T mode or before train() runs.
+        self.final_fpr = None
+        self.final_recall = None
 
     # [OPT] feature_chunk=500 (was 2000): caps per-batch intermediates in
     # _best_stump at ~0.75 GB instead of ~3 GB. Bit-identical results;
@@ -157,6 +163,14 @@ class AdaBoost:
                     # FPR at the actual operating point — the metric that
                     # matches the deployed cascade behavior.
                     fpr = float((running_neg_scores / sum_alpha_fpr >= op_thr).mean())
+                    # Track the latest operating-point metrics so the cascade
+                    # can check whether this stage actually satisfied
+                    # target_stage_fpr after train() returns. If the loop
+                    # runs to max_rounds without the early-stop firing, these
+                    # hold the last-round values — which is the "did we get
+                    # there or did we cap?" signal.
+                    self.final_fpr = fpr
+                    self.final_recall = recall_at_thr
                     pbar.set_postfix(err='{:.4f}'.format(err),
                                      alpha='{:.3f}'.format(alpha),
                                      thr='{:.3f}'.format(op_thr),

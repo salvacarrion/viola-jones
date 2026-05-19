@@ -23,7 +23,12 @@ from violajones import ViolaJones
 
 
 def _load_data(data_dir):
-    """Load NPY bundles produced by tools/prepare_data.py from `data_dir`."""
+    """Load NPY bundles produced by tools/prepare_data.py from `data_dir`.
+
+    Required: train_pos.npy, val_pos.npy, caltech_pool.npy
+    Optional: neg_seed.npy (matched-domain stage-1 seed when
+              `prepare_data.py --neg-source` is 'benchmark' or 'mixed')
+    """
     data_dir = str(data_dir)
     paths = {k: os.path.join(data_dir, f"{k}.npy")
              for k in ("train_pos", "val_pos", "caltech_pool")}
@@ -33,11 +38,8 @@ def _load_data(data_dir):
             f"Missing {missing} under {data_dir}. "
             f"Run `python tools/prepare_data.py` first.")
     bundles = {k: np.load(p) for k, p in paths.items()}
-    # Optional matched-domain seed (`prepare_data.py --neg-source cbcl|mixed`).
-    seed_path = os.path.join(data_dir, "cbcl_neg_seed.npy")
-    bundles["cbcl_neg_seed"] = np.load(seed_path) if os.path.exists(seed_path) else None
-    val_cbcl_path = os.path.join(data_dir, "val_cbcl_pos.npy")
-    bundles["val_cbcl_pos"] = np.load(val_cbcl_path) if os.path.exists(val_cbcl_path) else None
+    seed_path = os.path.join(data_dir, "neg_seed.npy")
+    bundles["neg_seed"] = np.load(seed_path) if os.path.exists(seed_path) else None
     return bundles
 
 
@@ -45,23 +47,32 @@ def train(data_dir, layer_recall=0.99,
           target_neg_per_stage=3000, neg_sample_budget=100000,
           weights_dir="weights", seed=42, target_stage_fpr=None,
           max_stages=30, max_wcs_per_stage=200, min_wcs_per_stage=1,
-          min_cascade_recall=0.80, resume_from=None):
+          min_cascade_recall=0.80, min_stage_negatives=0, resume_from=None,
+          hard_neg_pool=None):
     bundles = _load_data(data_dir)
     train_pos = bundles["train_pos"]
     val_pos = bundles["val_pos"]
     neg_pool = bundles["caltech_pool"]
-    seed_neg_pool = bundles["cbcl_neg_seed"]
+    neg_seed = bundles["neg_seed"]
     res = train_pos.shape[1]
+    # Optional override: replace the raw mining pool with a pre-mined hard-neg
+    # pool produced by tools/mine_hard_negatives.py. Skips the "easy" patches
+    # an earlier cascade already rejects, so every new stage starts against
+    # materially harder negatives. neg_seed stays as the stage-1 seed.
+    if hard_neg_pool is not None:
+        print(f"Override: loading hard-neg pool from {hard_neg_pool}")
+        hard = np.load(hard_neg_pool, mmap_mode="r")
+        assert hard.shape[1] == res and hard.shape[2] == res, (
+            f"Hard-neg pool is {hard.shape[1]}×{hard.shape[2]}, "
+            f"data is {res}×{res}. Resolution mismatch.")
+        neg_pool = hard
     print(f"Loaded data @ {res}×{res} from {data_dir}")
-    print(f"\t- train_pos:     {len(train_pos):,}")
-    print(f"\t- val_pos:       {len(val_pos):,}")
-    print(f"\t- neg_pool:      {len(neg_pool):,}")
-    if seed_neg_pool is not None:
-        print(f"\t- cbcl_neg_seed: {len(seed_neg_pool):,}  "
-              f"(matched-domain stage-1 seed)")
-    val_cal_pos = bundles.get("val_cbcl_pos")
-    if val_cal_pos is not None:
-        print(f"\t- val_cbcl_pos:  {len(val_cal_pos):,}  (CBCL-only calibration subset)")
+    print(f"\t- train_pos: {len(train_pos):,}")
+    print(f"\t- val_pos:   {len(val_pos):,}  (benchmark anchor, un-augmented)")
+    print(f"\t- neg_pool:  {len(neg_pool):,}"
+          + ("  (hard-mined)" if hard_neg_pool is not None else ""))
+    if neg_seed is not None:
+        print(f"\t- neg_seed:  {len(neg_seed):,}  (matched-domain stage-1 seed)")
 
     # Per-resolution feature cache (reused on subsequent runs at same res).
     cache_dir = os.path.join(str(data_dir), "_cache") + os.sep
@@ -94,6 +105,7 @@ def train(data_dir, layer_recall=0.99,
         clf.max_wcs_per_stage  = max_wcs_per_stage
         clf.min_wcs_per_stage  = min_wcs_per_stage
         clf.min_cascade_recall = min_cascade_recall
+        clf.min_stage_negatives = min_stage_negatives
     else:
         clf = ViolaJones(features_path=cache_dir,
                          layer_recall=layer_recall, base_size=res,
@@ -101,10 +113,10 @@ def train(data_dir, layer_recall=0.99,
                          max_stages=max_stages,
                          max_wcs_per_stage=max_wcs_per_stage,
                          min_wcs_per_stage=min_wcs_per_stage,
-                         min_cascade_recall=min_cascade_recall)
+                         min_cascade_recall=min_cascade_recall,
+                         min_stage_negatives=min_stage_negatives)
     clf.train(train_pos, val_pos, neg_pool,
-              seed_neg_pool=seed_neg_pool,
-              val_cal_pos=val_cal_pos,
+              neg_seed=neg_seed,
               target_neg_per_stage=target_neg_per_stage,
               neg_sample_budget=neg_sample_budget,
               seed=seed,
@@ -119,18 +131,18 @@ def test(weights_path, data_dir):
     print(f"Using weights: {weights_path}")
     clf = ViolaJones.load(weights_path)
 
-    pos_path = os.path.join(str(data_dir), "cbcl_test_pos.npy")
-    neg_path = os.path.join(str(data_dir), "cbcl_test_neg.npy")
+    pos_path = os.path.join(str(data_dir), "test_pos.npy")
+    neg_path = os.path.join(str(data_dir), "test_neg.npy")
     if not (os.path.exists(pos_path) and os.path.exists(neg_path)):
         raise FileNotFoundError(
-            f"CBCL test bundles not found at {data_dir}. Re-run "
-            f"`python tools/prepare_data.py` (default includes CBCL test).")
+            f"Test bundles not found at {data_dir}. Re-run "
+            f"`python tools/prepare_data.py` with --benchmark != none.")
 
     pos = np.load(pos_path)
     neg = np.load(neg_path)
     X = np.concatenate([pos, neg], axis=0)
     y = np.concatenate([np.ones(len(pos)), np.zeros(len(neg))])
-    print(f"CBCL test set: {len(pos):,} faces + {len(neg):,} non-faces "
+    print(f"Test set: {len(pos):,} faces + {len(neg):,} non-faces "
           f"@ {pos.shape[1]}×{pos.shape[2]}")
 
     print("\nEvaluating...")
@@ -159,7 +171,8 @@ def pick_weights(path=None):
 
 def find_faces(weight_path=None, image_paths=None, output_dir="images/outputs",
                nms_threshold=0.3, nms_mode="weighted", nms_metric="hybrid",
-               min_shift=None, scale_factor=None):
+               min_shift=None, scale_factor=None,
+               min_face_size=None, max_face_size=None):
     weight_path = pick_weights(weight_path)
     print(f"Using weights: {weight_path}")
 
@@ -172,13 +185,16 @@ def find_faces(weight_path=None, image_paths=None, output_dir="images/outputs",
     for face_path in image_paths:
         print(f"Detecting on {face_path}")
         pil_img = load_image(face_path)
-        regions = clf.find_faces(pil_img, growth=scale_factor, min_shift=min_shift)
+        regions = clf.find_faces(pil_img, growth=scale_factor, min_shift=min_shift,
+                                 min_face_size=min_face_size,
+                                 max_face_size=max_face_size)
         print(f"\t- raw regions: {len(regions)}")
 
         if regions:
             regions = non_maximum_supression(regions, threshold=nms_threshold,
                                              mode=nms_mode, metric=nms_metric)
             print(f"\t- after NMS:  {len(regions)}")
+            # for r in regions: print(f"\t  box: {tuple(int(v) for v in r[:4])} score={float(r[4]):.1f}" if len(r) >= 5 else f"\t  box: {tuple(int(v) for v in r[:4])}")
 
         drawn_img = draw_bounding_boxes(pil_img, list(regions), thickness=2)
         out_path = os.path.join(
@@ -222,6 +238,10 @@ if __name__ == "__main__":
                         help="Stop adding stages when cumulative val-pos recall drops "
                              "below this (default: 0.80). Prevents deep cascades from "
                              "trading too much recall for marginal specificity gains.")
+    parser.add_argument("--min-stage-negatives", type=int, default=0,
+                        help="Stop adding stages if mining yields fewer than this many "
+                             "hard negatives (default: 0). Prevents training "
+                             "degenerated stages when the negative pool is exhausted.")
     parser.add_argument("--layer-recall", type=float, default=0.99,
                         help="Per-stage face-recall target (default: 0.99)")
     parser.add_argument("--target-neg-per-stage", type=int, default=3000,
@@ -234,6 +254,14 @@ if __name__ == "__main__":
                              "Loads the partial cascade and continues from the next "
                              "stage. All other training args (--max-wcs-per-stage, "
                              "--target-stage-fpr, etc.) are applied to the resumed run.")
+    parser.add_argument("--hard-neg-pool", default=None, metavar="NPY",
+                        help="Path to a hard-negative pool .npy produced by "
+                             "tools/mine_hard_negatives.py. If given, replaces "
+                             "the data-dir's caltech_pool.npy as the mining "
+                             "source — every stage's hard-neg mining draws from "
+                             "patches the previous cascade already misclassifies, "
+                             "so AdaBoost starts against materially harder "
+                             "negatives. Resolution must match the data dir.")
     parser.add_argument("--target-stage-fpr", type=float, default=0.5,
                         help="Per-stage FPR target for adaptive training (paper §3). "
                              "Each stage stops adding weak classifiers once training-"
@@ -275,6 +303,15 @@ if __name__ == "__main__":
                              "self.base_scale, typically 1.25). Increase to "
                              "1.3–1.5 for fewer pyramid levels and faster "
                              "detection.")
+    parser.add_argument("--detect-min-face", type=int, default=None,
+                        metavar="PX",
+                        help="Smallest face size in image pixels. Skips "
+                             "pyramid scales below this — clamped to the "
+                             "training resolution (model's base_width).")
+    parser.add_argument("--detect-max-face", type=int, default=None,
+                        metavar="PX",
+                        help="Largest face size in image pixels. Stops the "
+                             "pyramid once the window exceeds this.")
 
     args = parser.parse_args()
 
@@ -293,7 +330,9 @@ if __name__ == "__main__":
               max_wcs_per_stage=args.max_wcs_per_stage,
               min_wcs_per_stage=args.min_wcs_per_stage,
               min_cascade_recall=args.min_cascade_recall,
-              resume_from=args.resume_from)
+              min_stage_negatives=args.min_stage_negatives,
+              resume_from=args.resume_from,
+              hard_neg_pool=args.hard_neg_pool)
     elif args.mode == "test":
         test(args.weights_path, args.data_dir)
     elif args.mode == "detect":
@@ -304,6 +343,8 @@ if __name__ == "__main__":
                    nms_mode=args.nms_mode,
                    nms_metric=args.nms_metric,
                    min_shift=args.detect_shift,
-                   scale_factor=args.detect_scale)
+                   scale_factor=args.detect_scale,
+                   min_face_size=args.detect_min_face,
+                   max_face_size=args.detect_max_face)
 
     print("\n" + get_pretty_time(start_time, s="Total time: "))
