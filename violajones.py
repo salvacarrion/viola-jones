@@ -418,7 +418,8 @@ class ViolaJones:
         return 1
 
     def find_faces(self, pil_image, growth=None, min_shift=None,
-                   min_face_size=None, max_face_size=None):
+                   min_face_size=None, max_face_size=None,
+                   min_score=None):
         """
         Multi-scale sliding-window detection on a PIL image.
 
@@ -443,6 +444,10 @@ class ViolaJones:
                 value below it is silently clamped.
             max_face_size: largest detectable face in image pixels. Stops
                 the pyramid once the window exceeds this.
+            min_score: discard regions whose accumulated cascade margin
+                (the `score` field — see Returns) falls below this value.
+                None disables filtering. Typical useful range is 0.05–0.5
+                for a 10–15 stage cascade; higher values filter aggressively.
 
         Returns:
             list of (x1, y1, x2, y2, score) tuples in image coordinates.
@@ -544,6 +549,10 @@ class ViolaJones:
                 margin_sum[alive[passed]] += vote[passed] - layer_thr
                 alive = alive[passed]
 
+            if alive.size:
+                if min_score is not None:
+                    keep = margin_sum[alive] >= float(min_score)
+                    alive = alive[keep]
             if alive.size:
                 xs1 = x1[alive].tolist()
                 ys1 = y1[alive].tolist()

@@ -2,7 +2,7 @@
 
 From-scratch NumPy implementation of [Viola & Jones (2001)](https://doi.org/10.1109/CVPR.2001.990517): Haar-like features + integral image + AdaBoost + attentional cascade with hard-negative mining.
 
-![Detection example](images/outputs/19__cbcl_v1/judybats_detected.png)
+![Detection example](images/outputs/best/judybats_detected.png)
 
 ## Installation
 
@@ -40,16 +40,18 @@ python tools/tune_thresholds.py --weights weights/19/cbcl__19.pkl --data-dir dat
 
 All metrics on the **CBCL benchmark** (472 faces / 23 573 non-faces). F1<sub>tuned</sub> = best F1 after post-hoc threshold tuning on the same model.
 
-| Resolution | Faces                       | Stages       | Recall | Specificity | Precision |   F1  | F1<sub>tuned</sub> | Train time |
-| :--------: | :-------------------------- | :----------: | :----: | :---------: | :-------: | :---: | :----------------: | :--------: |
-|   19×19    | CBCL                        |      11      | 0.657  |    0.987    |   0.503   | 0.570 |     **0.634**      |    ~6 h    |
-|   19×19    | CelebA<sub>aligned</sub>    |  3 (capped)  | 0.949  |    0.702    |   0.060   | 0.113 |         —          |    ~5 h    |
-|   19×19    | CelebA<sub>aligned</sub>+CBCL |    11      | 0.653  |    0.989    |   0.548   | 0.596 |     **0.639**      |   ~20 h    |
-|   19×19    | CBCL (extended stages)      |     TBD      |   —    |      —      |     —     |   —   |         —          |    TBD     |
-|   24×24    | CBCL                        |     TBD      |   —    |      —      |     —     |   —   |         —          |    TBD     |
-|   24×24    | CelebA<sub>aligned</sub>+CBCL |    TBD     |   —    |      —      |     —     |   —   |         —          |    TBD     |
+| Resolution | Faces                         | Version | Stages       | Recall | Specificity | Precision |   F1  | F1<sub>tuned</sub> | Train time |
+| :--------: | :---------------------------- | :-----: | :----------: | :----: | :---------: | :-------: | :---: | :----------------: | :--------: |
+|   19×19    | CBCL                          |   v1    |      11      | 0.657  |    0.987    |   0.503   | 0.570 |       0.634        |    ~6 h    |
+|   19×19    | CBCL                          | **v2**  |      15      | 0.600  |    0.993    |   0.639   | 0.619 |     **0.658**      | +14 h 43 m |
+|   19×19    | CelebA<sub>aligned</sub>      |   v1    |  3 (capped)  | 0.949  |    0.702    |   0.060   | 0.113 |       0.542        |    ~5 h    |
+|   19×19    | CelebA<sub>aligned</sub>      | **v2**  |  6 (capped)  | 0.890  |    0.855    |   0.110   | 0.195 |       0.550        | +13 h 12 m |
+|   19×19    | CelebA<sub>aligned</sub>+CBCL |   v1    |      11      | 0.653  |    0.989    |   0.548   | 0.596 |       0.639        |   ~20 h    |
+|   19×19    | CelebA<sub>aligned</sub>+CBCL | **v2**  |      16      | 0.574  |    0.995    |   0.693   | 0.628 |     **0.661**      | +35 h 19 m |
+|   24×24    | CBCL                          |   TBD   |     TBD      |   —    |      —      |     —     |   —   |         —          |    TBD     |
+|   24×24    | CelebA<sub>aligned</sub>+CBCL |   TBD   |     TBD      |   —    |      —      |     —     |   —   |         —          |    TBD     |
 
-Shared hyperparameters (19×19 baselines): `--max-stages 20 --max-wcs-per-stage 400 --target-stage-fpr 0.5 --min-cascade-recall 0.95 --target-neg-per-stage 5000 --neg-sample-budget 50000000 --augment --jitter 1`.
+Shared hyperparameters (19×19 baselines, v1): `--max-stages 20 --max-wcs-per-stage 400 --target-stage-fpr 0.5 --min-cascade-recall 0.95 --target-neg-per-stage 5000 --neg-sample-budget 50000000 --augment --jitter 1`. v2 resumes from v1 with the cap relaxed: `--max-wcs-per-stage 800 --target-stage-fpr 0.65` (everything else unchanged). The v2 tuned 19×19 models now beat the historical 24×24 best (F1=0.653).
 
 See [RESULTS.md](RESULTS.md) for per-stage diagnostics and the full experimental log, and [FINDINGS.md](FINDINGS.md) for the technical narrative behind each design choice.
 

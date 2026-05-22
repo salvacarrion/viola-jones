@@ -172,7 +172,8 @@ def pick_weights(path=None):
 def find_faces(weight_path=None, image_paths=None, output_dir="images/outputs",
                nms_threshold=0.3, nms_mode="weighted", nms_metric="hybrid",
                min_shift=None, scale_factor=None,
-               min_face_size=None, max_face_size=None):
+               min_face_size=None, max_face_size=None,
+               min_score=None):
     weight_path = pick_weights(weight_path)
     print(f"Using weights: {weight_path}")
 
@@ -187,8 +188,16 @@ def find_faces(weight_path=None, image_paths=None, output_dir="images/outputs",
         pil_img = load_image(face_path)
         regions = clf.find_faces(pil_img, growth=scale_factor, min_shift=min_shift,
                                  min_face_size=min_face_size,
-                                 max_face_size=max_face_size)
-        print(f"\t- raw regions: {len(regions)}")
+                                 max_face_size=max_face_size,
+                                 min_score=min_score)
+        if regions:
+            scores = [r[4] for r in regions if len(r) >= 5]
+            score_stats = (f"  scores: min={min(scores):.3f} "
+                           f"median={sorted(scores)[len(scores)//2]:.3f} "
+                           f"max={max(scores):.3f}") if scores else ""
+        else:
+            score_stats = ""
+        print(f"\t- raw regions: {len(regions)}{score_stats}")
 
         if regions:
             regions = non_maximum_supression(regions, threshold=nms_threshold,
@@ -312,6 +321,20 @@ if __name__ == "__main__":
                         metavar="PX",
                         help="Largest face size in image pixels. Stops the "
                              "pyramid once the window exceeds this.")
+    parser.add_argument("--detect-min-score", type=float, default=None,
+                        metavar="S",
+                        help="Discard detections whose accumulated cascade "
+                             "margin (sum of per-stage `vote - layer_thr` "
+                             "over every stage the window passed) is below "
+                             "this value. None disables filtering. Each "
+                             "detect run prints min/median/max score of the "
+                             "raw regions — use that to pick a value. "
+                             "Typical useful range 0.05–0.5 for a 10-15 "
+                             "stage cascade; the tuned cascades produce "
+                             "more low-score borderline detections than the "
+                             "raw ones, so this is the recommended knob to "
+                             "clean up sliding-window output without "
+                             "retraining.")
 
     args = parser.parse_args()
 
@@ -345,6 +368,7 @@ if __name__ == "__main__":
                    min_shift=args.detect_shift,
                    scale_factor=args.detect_scale,
                    min_face_size=args.detect_min_face,
-                   max_face_size=args.detect_max_face)
+                   max_face_size=args.detect_max_face,
+                   min_score=args.detect_min_score)
 
     print("\n" + get_pretty_time(start_time, s="Total time: "))

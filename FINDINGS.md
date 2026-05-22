@@ -245,6 +245,17 @@ Run A converged cleanly for 13 stages at `FPR ≤ 0.5` each. Run B hit a cliff a
 
 **Lesson:** augmentation interacts with model capacity. At small resolutions the Haar feature space is the bottleneck — adding training diversity (jitter, augment) can exceed the model's ability to represent the resulting decision boundary. The symptom is "stages cap without converging" rather than "model overfits" — a different failure mode that doesn't show up in cross-validation because the cascade structure itself degrades.
 
+### v2 extension — where the ceiling actually sits
+
+The pending experiment listed in RESULTS.md ("19×19 CBCL extended stages") was run by resuming each v1 baseline from its capped final stage with `--max-wcs-per-stage 800 --target-stage-fpr 0.65` (everything else identical to v1). Two distinct regimes appeared:
+
+- **Multi-source runs (CBCL, mixed)** *did* extend cleanly. CBCL went 11 → 15 stages, mixed went 11 → 16. Each new stage early-stopped at FPR ≈ 0.63–0.65 (just below the relaxed target) using 344–778 weak classifiers per stage — roughly 5× more than the equivalent depth in v1, but still finite. Tuned F1 lifted +2.2 to +2.4 pp on both runs (0.634 → 0.658 cbcl; 0.639 → 0.661 mixed), now ahead of the historical 24×24 best.
+- **CelebA-aligned-only stayed broken.** v1 capped at stage 3 (FPR=0.598). v2 reached stage 6 but every added stage saturated against the WC cap progressively earlier — stage 6 trained the full 800 WCs and *still* couldn't get FPR below 0.713. The capacity-ceiling break fired again. No amount of `target_stage_fpr` slack rescues a run where the feature space cannot separate the matched-domain hard negatives from the (unanchored, ±1 px jittered) CelebA positives in the first place.
+
+**What the v2 extension actually demonstrated.** The 19×19 ceiling is not a single number — it's a curve. With *matched-domain anchored* positives (CBCL alone or mixed), the cascade can keep adding stages past FPR=0.5 if you raise the cap; each new stage just costs more weak classifiers (~400-800 vs ~150-400 at v1 depth). Beyond that the diminishing return is real: stages 12–16 cost ~25 h of wall time across both runs combined for +2 pp F1. Without anchored positives, the cascade hits the *real* ceiling at stage ~3–6 regardless of how much WC budget you allow — the feature space genuinely cannot represent the decision boundary.
+
+**Practical takeaway:** if a stage caps with `final_fpr > 0.5`, check whether the run has CBCL-style anchored positives before extending. A v1 → v2 resume buys you +2 pp F1 on the well-anchored configurations; on the CelebA-only configuration it just postpones the same failure to a deeper stage.
+
 ---
 
 ## What worked vs what didn't
