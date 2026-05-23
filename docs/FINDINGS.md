@@ -256,6 +256,18 @@ The pending experiment listed in RESULTS.md ("19×19 CBCL extended stages") was 
 
 **Practical takeaway:** if a stage caps with `final_fpr > 0.5`, check whether the run has CBCL-style anchored positives before extending. A v1 → v2 resume buys you +2 pp F1 on the well-anchored configurations; on the CelebA-only configuration it just postpones the same failure to a deeper stage.
 
+### v3 filtered — does positive curation rescue the CelebA ceiling? (no.)
+
+The natural follow-up to v2: if CelebA-only saturates because the *aligned* dataset still carries residual misaligned crops, then dropping the worst crops should free the cascade. Built the curation pipeline ([WORKFLOW.md](WORKFLOW.md) §4): score every CelebA-aligned positive with a frozen `cbcl__19_v2` oracle (cumulative AdaBoost margin), drop the bottom 61% (matches CBCL's positive count: ~7700 augmented entries = ~2000 unique faces, vs CBCL's 1929 unique). Pre-mine a 15K very-hard-neg reservoir from the same oracle via the streaming raw miner (`tools/mine_hard_negatives_raw.py`, 326M patches sampled at 0.0046% FPR) to top up late-stage mining shortfalls. Train with identical hyperparameters to cbcl v1.
+
+**Result:** still capped at stage 3, with FPR=0.622 at the same 400-WC budget as cbcl v1's stage 11 (which converged at FPR ≈ 0.47). Tuned F1=0.603 vs cbcl v1's 0.634 — close enough to call "paridad" at the operating-point level, but only because the F1 tuner does heroic work over the 3 trained stages: thresholds collapse to `[0.30, 0.44, 0.52]` and recall is sacrificed (0.917 → 0.504) for precision (0.056 → 0.751). cbcl v1 reaches its 0.634 with 11 stages of natural rejection power; CelebA filtered v3 reaches 0.603 by squeezing every drop out of 3 stages plus tuning. **The very-hard reservoir was never tapped** — training stopped before mining became hard enough to trigger a shortfall.
+
+**What v3 actually proves.** Curation is not the missing piece. The structural delta is the feature space, not the data quality. Visual inspection of the `score_samples.png` grid (the bottom 30% of CelebA-aligned scores cluster on visibly off-axis crops) had suggested filtering would close the gap. It didn't, because *even the cleanest 2000 unique CelebA faces* exceed what 17K Haar features can discriminate against face-like hard negatives while tolerating ±1 px jitter. The capacity ceiling is the resolution, not the dataset.
+
+**Two side effects worth keeping.** First, the curation infrastructure works: F1 went from 0.542 (v1 unfiltered) → 0.603 (v3 filtered) — a real +6 pp lift that confirms the tooling produces a measurable improvement, just not enough to break the ceiling. Second, the streaming raw miner (`tools/mine_hard_negatives_raw.py`) is materially better than the pre-built-pool version for late-stage cascades: 15K very-hard patches at 0.0046% FPR is a usable reservoir, where the legacy pool-based miner against the same `cbcl__19_v2` would have yielded ~5K from a finite 50M pool. Both tools transfer cleanly to 24×24.
+
+**Lesson:** when a capacity-bound configuration shows reasonable per-stage early-stops in the first 1-2 stages, curating the positives can buy a small lift to the trained operating point — but the post-tuning F1 ceiling is set by the cascade *depth*, which the feature space caps. If the cascade saturates at stage 3 with FPR ≈ 0.6, curation alone won't get it to stage 12. The fix is upstream: more features (24×24), not better positives.
+
 ---
 
 ## What worked vs what didn't
@@ -274,8 +286,11 @@ The pending experiment listed in RESULTS.md ("19×19 CBCL extended stages") was 
 | Fix `min_shift` bug                             | 4× faster detection                             | Actually uses `self.shift=2` as intended                         |
 | CelebA-only at 19×19 (raw, no alignment)        | Recall 0.017                                    | Pixel alignment mismatch with CBCL benchmark                     |
 | CelebA-only at 19×19 (aligned, jitter=2)        | Cascade caps at 3 stages, F1=0.113              | Variety exceeds Haar-feature capacity                            |
+| CelebA-only at 19×19 (aligned, filtered drop 0.61) | Still caps at 3 stages, tuned F1=0.603       | Curation lifts operating point +6 pp but doesn't break ceiling   |
 | Adding stages to a saturated cascade            | Makes recall worse                              | More rejection on already-broken positives = lower recall        |
 | H-flip augmentation                             | Marginal                                        | Symmetric Haar features partially already invariant to it        |
+| Positive curation (`--drop-low-score-pos`)      | +6 pp F1 on capacity-bound runs                 | Removes residual misaligned crops; doesn't fix the feature cap   |
+| Streaming raw very-hard mining                  | 15K hard negs at 0.0046% FPR (vs ~5K from pool) | No finite intermediate pool — scans HF raw until target reached  |
 
 ---
 

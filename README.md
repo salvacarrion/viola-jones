@@ -46,14 +46,15 @@ All metrics on the **CBCL benchmark** (472 faces / 23 573 non-faces). F1<sub>tun
 |   19×19    | CBCL                          | **v2**  |      15      | 0.600  |    0.993    |   0.639   | 0.619 |     **0.658**      | +14 h 43 m |
 |   19×19    | CelebA<sub>aligned</sub>      |   v1    |  3 (capped)  | 0.949  |    0.702    |   0.060   | 0.113 |       0.542        |    ~5 h    |
 |   19×19    | CelebA<sub>aligned</sub>      | **v2**  |  6 (capped)  | 0.890  |    0.855    |   0.110   | 0.195 |       0.550        | +13 h 12 m |
+|   19×19    | CelebA<sub>aligned</sub> (filtered drop 0.61) | **v3** | 3 (capped) | 0.917 | 0.692 | 0.056 | 0.106 | 0.603 | ~2.2 h |
 |   19×19    | CelebA<sub>aligned</sub>+CBCL |   v1    |      11      | 0.653  |    0.989    |   0.548   | 0.596 |       0.639        |   ~20 h    |
 |   19×19    | CelebA<sub>aligned</sub>+CBCL | **v2**  |      16      | 0.574  |    0.995    |   0.693   | 0.628 |     **0.661**      | +35 h 19 m |
 |   24×24    | CBCL                          |   TBD   |     TBD      |   —    |      —      |     —     |   —   |         —          |    TBD     |
 |   24×24    | CelebA<sub>aligned</sub>+CBCL |   TBD   |     TBD      |   —    |      —      |     —     |   —   |         —          |    TBD     |
 
-Shared hyperparameters (19×19 baselines, v1): `--max-stages 20 --max-wcs-per-stage 400 --target-stage-fpr 0.5 --min-cascade-recall 0.95 --target-neg-per-stage 5000 --neg-sample-budget 50000000 --augment --jitter 1`. v2 resumes from v1 with the cap relaxed: `--max-wcs-per-stage 800 --target-stage-fpr 0.65` (everything else unchanged). The v2 tuned 19×19 models now beat the historical 24×24 best (F1=0.653).
+Shared hyperparameters (19×19 baselines, v1): `--max-stages 20 --max-wcs-per-stage 400 --target-stage-fpr 0.5 --min-cascade-recall 0.95 --target-neg-per-stage 5000 --neg-sample-budget 50000000 --augment --jitter 1`. v2 resumes from v1 with the cap relaxed: `--max-wcs-per-stage 800 --target-stage-fpr 0.65` (everything else unchanged). The v2 tuned 19×19 models now beat the historical 24×24 best (F1=0.653). v3 (CelebA filtered) uses v1 hyperparameters plus the curation pipeline (`--drop-low-score-pos 0.61 --very-hard-neg-pool ...`) — confirmed that positive curation alone doesn't break the 19×19 capacity ceiling; the next experiment is 24×24.
 
-See [RESULTS.md](RESULTS.md) for per-stage diagnostics and the full experimental log, and [FINDINGS.md](FINDINGS.md) for the technical narrative behind each design choice.
+See [docs/RESULTS.md](docs/RESULTS.md) for per-stage diagnostics and the full experimental log, and [docs/FINDINGS.md](docs/FINDINGS.md) for the technical narrative behind each design choice.
 
 ## Citation
 

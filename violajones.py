@@ -44,8 +44,9 @@ class ViolaJones:
         self.min_stage_negatives = min_stage_negatives
 
     def train(self, train_pos, val_pos, neg_pool, neg_seed=None,
+              very_hard_pool=None,
               target_neg_per_stage=3000, neg_sample_budget=100000, seed=42,
-              checkpoint_path=None):
+              checkpoint_path=None, pos_cache_suffix=""):
         """
         Train a Viola-Jones cascade.
 
@@ -116,7 +117,8 @@ class ViolaJones:
         print("\t- Total time: " + get_pretty_time(start_time))
 
         X_f_pos = self._apply_and_normalize(
-            X_pos_ii, X_pos_std, features, cache_name="xf_pos")
+            X_pos_ii, X_pos_std, features,
+            cache_name="xf_pos" + pos_cache_suffix)
         # Validation-set features: needed by AdaBoost.train so it can
         # recalibrate the layer threshold every round and check FPR at the
         # actual operating point (paper §3 — d ≥ target_recall AND f ≤ target
@@ -143,7 +145,7 @@ class ViolaJones:
                   "hard negatives for stage {:,}...".format(start_stage, start_stage + 1))
             current_negs_X = self._mine_hard_negatives(
                 neg_pool, target_neg_per_stage, neg_sample_budget, rng,
-                neg_seed=neg_seed)
+                neg_seed=neg_seed, very_hard_pool=very_hard_pool)
             print("\t- {:,} hard negatives ready for stage {:,}".format(
                 len(current_negs_X), start_stage + 1))
 
@@ -263,7 +265,7 @@ class ViolaJones:
             # ---- Mine negatives for the next stage ----
             current_negs_X = self._mine_hard_negatives(
                 neg_pool, target_neg_per_stage, neg_sample_budget, rng,
-                neg_seed=neg_seed)
+                neg_seed=neg_seed, very_hard_pool=very_hard_pool)
             print("\t- negatives carried to next stage: {}".format(len(current_negs_X)))
 
     @staticmethod
@@ -370,7 +372,7 @@ class ViolaJones:
         return found
 
     def _mine_hard_negatives(self, neg_pool, target, budget, rng,
-                             neg_seed=None):
+                             neg_seed=None, very_hard_pool=None):
         """Mine hard negatives, optionally stratified across two pools.
 
         When `neg_seed` is given (e.g. CBCL non-faces), allocate half the
@@ -378,6 +380,13 @@ class ViolaJones:
         This keeps matched-domain hard negatives in the training mix at
         EVERY stage, not just stage 1 — fixing the "stage 9 trained with
         only Caltech-flavored negatives" symptom we observed.
+
+        When `very_hard_pool` is given (pre-mined against a strong oracle
+        cascade), it is used ONLY as a last-resort top-up after seed +
+        Caltech mining returns fewer patches than `target`. Deep stages
+        deplete the main pool's mineable patches (each pass takes longer
+        and finds fewer "still-misclassified-as-face" patches); the
+        reservoir absorbs that shortfall instead of letting `target` slip.
         """
         print("Mining hard negatives (target={}, budget={})...".format(target, budget))
         found = []
@@ -401,6 +410,23 @@ class ViolaJones:
                                           label="caltech")
         else:
             found += self._mine_from_pool(neg_pool, target, budget, rng)
+        # Top up from the very-hard reservoir only after the regular pools
+        # have been exhausted. Order matters: regular mining never sees
+        # these patches, so the cascade keeps learning against fresh
+        # negatives while it can. When mining naturally falls short
+        # (typical at stages 12+), the reservoir fills the gap.
+        shortfall = target - len(found)
+        if shortfall > 0 and very_hard_pool is not None and len(very_hard_pool) > 0:
+            # Budget here is "scan the whole reservoir once" — these patches
+            # are already model-verified hard, so we want all the ones the
+            # current partial cascade still misclassifies. Reservoir is
+            # small (10-100K), single pass is cheap.
+            topup = self._mine_from_pool(
+                very_hard_pool, shortfall, len(very_hard_pool), rng,
+                label="vhard")
+            found += topup
+            print("\t- vhard top-up: requested {}, kept {}".format(
+                shortfall, len(topup)))
         if not found:
             return np.empty((0, *neg_pool.shape[1:]), dtype=neg_pool.dtype)
         return np.array(found)

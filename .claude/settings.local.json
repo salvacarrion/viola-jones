@@ -73,7 +73,13 @@
       "Bash([ -f \"/Users/salvacarrion/Documents/Programming/Python/viola-jones/$pkl\" ])",
       "Bash(python -m unittest discover -s tests)",
       "Bash(python main.py detect --detect-output images/outputs/19_cbcl__19_v2 --weights weights/19/cbcl__19_v2_tuned.pkl --nms-threshold 0.5 --nms-mode weighted --nms-metric hybrid --detect-images /Users/salvacarrion/Documents/Programming/Python/viola-jones/images/judybats.jpg)",
-      "Bash(python main.py detect --detect-output /tmp/vj_test --weights weights/19/cbcl__19_v1_tuned.pkl --nms-threshold 0.5 --nms-mode weighted --nms-metric hybrid --detect-images images/judybats.jpg)"
+      "Bash(python main.py detect --detect-output /tmp/vj_test --weights weights/19/cbcl__19_v1_tuned.pkl --nms-threshold 0.5 --nms-mode weighted --nms-metric hybrid --detect-images images/judybats.jpg)",
+      "Bash(python -c \"import ast; ast.parse\\(open\\('main.py'\\).read\\(\\)\\); ast.parse\\(open\\('violajones.py'\\).read\\(\\)\\); ast.parse\\(open\\('tools/score_faces.py'\\).read\\(\\)\\); print\\('OK'\\)\")",
+      "Bash(python tools/score_faces.py --help)",
+      "Bash(python -c \"import ast; ast.parse\\(open\\('tools/score_faces.py'\\).read\\(\\)\\); print\\('OK'\\)\")",
+      "Bash(python -c \"import ast; ast.parse\\(open\\('tools/mine_hard_negatives_raw.py'\\).read\\(\\)\\); print\\('OK'\\)\")",
+      "Bash(python tools/mine_hard_negatives_raw.py --help)",
+      "Bash(python -c \"from PIL import ImageFont; f = ImageFont.load_default\\(size=18\\); print\\('Pillow ships scalable default:', f\\)\")"
     ]
   }
 }

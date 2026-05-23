@@ -48,7 +48,8 @@ def train(data_dir, layer_recall=0.99,
           weights_dir="weights", seed=42, target_stage_fpr=None,
           max_stages=30, max_wcs_per_stage=200, min_wcs_per_stage=1,
           min_cascade_recall=0.80, min_stage_negatives=0, resume_from=None,
-          hard_neg_pool=None):
+          hard_neg_pool=None, very_hard_neg_pool=None,
+          drop_low_score_pos=0.0):
     bundles = _load_data(data_dir)
     train_pos = bundles["train_pos"]
     val_pos = bundles["val_pos"]
@@ -66,13 +67,57 @@ def train(data_dir, layer_recall=0.99,
             f"Hard-neg pool is {hard.shape[1]}×{hard.shape[2]}, "
             f"data is {res}×{res}. Resolution mismatch.")
         neg_pool = hard
+
+    # Optional positive filtering by oracle score.
+    # face_scores.npy is produced by tools/score_faces.py and ranks each
+    # train_pos sample by cumulative AdaBoost margin against a frozen oracle
+    # cascade. Dropping the bottom-fraction removes the crops the oracle is
+    # most confident are NOT canonical aligned faces — typically alignment
+    # failures the dataset still carries.
+    pos_cache_suffix = ""
+    if drop_low_score_pos > 0.0:
+        scores_path = os.path.join(str(data_dir), "face_scores.npy")
+        if not os.path.exists(scores_path):
+            raise FileNotFoundError(
+                f"--drop-low-score-pos {drop_low_score_pos} requires "
+                f"{scores_path}. Run `python tools/score_faces.py --weights "
+                f"<oracle.pkl> --data-dir {data_dir}` first.")
+        scores = np.load(scores_path)
+        if len(scores) != len(train_pos):
+            raise ValueError(
+                f"face_scores.npy has {len(scores)} entries but train_pos "
+                f"has {len(train_pos)}. Re-run score_faces.py.")
+        n_drop = int(round(drop_low_score_pos * len(train_pos)))
+        if n_drop > 0:
+            keep = np.argsort(scores)[n_drop:]  # bottom-N indices removed
+            cutoff = float(scores[np.argsort(scores)[n_drop - 1]])
+            print(f"Filter: dropping {n_drop:,}/{len(train_pos):,} "
+                  f"({100*drop_low_score_pos:.1f}%) lowest-scoring positives "
+                  f"(cutoff score ≤ {cutoff:+.4f})")
+            train_pos = train_pos[keep]
+            # Separate cache key so the cached features for the full set don't
+            # leak into the filtered run and vice versa.
+            pos_cache_suffix = f"__drop{drop_low_score_pos:.2f}"
+
+    if very_hard_neg_pool is not None:
+        vh = np.load(very_hard_neg_pool, mmap_mode="r")
+        assert vh.shape[1] == res and vh.shape[2] == res, (
+            f"Very-hard pool is {vh.shape[1]}×{vh.shape[2]}, "
+            f"data is {res}×{res}. Resolution mismatch.")
+    else:
+        vh = None
+
     print(f"Loaded data @ {res}×{res} from {data_dir}")
-    print(f"\t- train_pos: {len(train_pos):,}")
+    print(f"\t- train_pos: {len(train_pos):,}"
+          + (f"  (filtered: -{drop_low_score_pos:.0%})"
+             if drop_low_score_pos > 0 else ""))
     print(f"\t- val_pos:   {len(val_pos):,}  (benchmark anchor, un-augmented)")
     print(f"\t- neg_pool:  {len(neg_pool):,}"
           + ("  (hard-mined)" if hard_neg_pool is not None else ""))
     if neg_seed is not None:
         print(f"\t- neg_seed:  {len(neg_seed):,}  (matched-domain stage-1 seed)")
+    if vh is not None:
+        print(f"\t- vhard_pool: {len(vh):,}  (top-up reservoir for mining shortfalls)")
 
     # Per-resolution feature cache (reused on subsequent runs at same res).
     cache_dir = os.path.join(str(data_dir), "_cache") + os.sep
@@ -117,10 +162,12 @@ def train(data_dir, layer_recall=0.99,
                          min_stage_negatives=min_stage_negatives)
     clf.train(train_pos, val_pos, neg_pool,
               neg_seed=neg_seed,
+              very_hard_pool=vh,
               target_neg_per_stage=target_neg_per_stage,
               neg_sample_budget=neg_sample_budget,
               seed=seed,
-              checkpoint_path=out_path)
+              checkpoint_path=out_path,
+              pos_cache_suffix=pos_cache_suffix)
     print("Training finished!")
     print(f"Final weights -> {out_path}.pkl")
     return clf
@@ -271,6 +318,26 @@ if __name__ == "__main__":
                              "patches the previous cascade already misclassifies, "
                              "so AdaBoost starts against materially harder "
                              "negatives. Resolution must match the data dir.")
+    parser.add_argument("--very-hard-neg-pool", default=None, metavar="NPY",
+                        help="Path to a pre-mined very-hard-negative pool "
+                             "(produced by tools/mine_hard_negatives.py against "
+                             "a strong oracle cascade). Used ONLY as a top-up "
+                             "reservoir when normal per-stage mining "
+                             "(seed + caltech_pool) returns fewer patches than "
+                             "--target-neg-per-stage. Lets deep stages keep "
+                             "training even when the regular pool is "
+                             "depleted, which is what stops cbcl/celeba+cbcl "
+                             "at stage 15-16. Resolution must match the data dir.")
+    parser.add_argument("--drop-low-score-pos", type=float, default=0.0,
+                        metavar="FRAC",
+                        help="Fraction in [0, 1] of lowest-scoring positives "
+                             "to drop before training. Requires "
+                             "<data-dir>/face_scores.npy (produce with "
+                             "tools/score_faces.py against a frozen oracle "
+                             "cascade). Removes the crops least face-like in "
+                             "the oracle's view — typically residual "
+                             "alignment failures CelebA still carries. "
+                             "Default: 0.0 (no filtering).")
     parser.add_argument("--target-stage-fpr", type=float, default=0.5,
                         help="Per-stage FPR target for adaptive training (paper §3). "
                              "Each stage stops adding weak classifiers once training-"
@@ -355,7 +422,9 @@ if __name__ == "__main__":
               min_cascade_recall=args.min_cascade_recall,
               min_stage_negatives=args.min_stage_negatives,
               resume_from=args.resume_from,
-              hard_neg_pool=args.hard_neg_pool)
+              hard_neg_pool=args.hard_neg_pool,
+              very_hard_neg_pool=args.very_hard_neg_pool,
+              drop_low_score_pos=args.drop_low_score_pos)
     elif args.mode == "test":
         test(args.weights_path, args.data_dir)
     elif args.mode == "detect":

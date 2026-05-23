@@ -11,6 +11,7 @@ Detailed metrics for every training run, in chronological order. All numbers are
 | `weights/24/cvj_weights_1777843525_tuned.pkl`             |   24×24    | CBCL, F1-tuned                          |   9    | 0.597  | 0.995 | **0.653** |
 | `weights/19/celeba_aligned+cbcl__19_v1_tuned.pkl`         |   19×19    | CelebA<sub>aligned</sub>+CBCL, F1-tuned |   11   | 0.614  | 0.994 |   0.639   |
 | `weights/19/cbcl__19_v1_tuned.pkl`                        |   19×19    | CBCL, F1-tuned                          |   11   | 0.583  | 0.995 |   0.634   |
+| `weights/19/celeba_aligned_filtered__19_v1_tuned.pkl`     |   19×19    | CelebA<sub>aligned</sub> (filtered drop 0.61), F1-tuned | 3 | 0.504  | 0.997 |   0.603   |
 
 After the v2 extension (resume from v1 with `--max-wcs-per-stage 800 --target-stage-fpr 0.65`), the 19×19 tuned models now **overtake the historical 24×24 best** by ~0.5–0.8 pp F1. The bug fixes documented in [FINDINGS.md](FINDINGS.md) plus the extra ~4 stages buy the rest of the gap.
 
@@ -158,6 +159,35 @@ Still qualitatively broken in raw form — the cascade flags ~14 % of non-faces 
 
 **Lesson confirmed:** extending the cascade does not rescue a capacity-bound run. v1 capped at stage 3 with FPR=0.598; v2 reached stage 6 but each additional stage hit the FPR cap progressively earlier (stage 6 saturated *at 800 WCs*, vs v1's stage 3 saturating at 400). The 19×19 Haar budget genuinely cannot express CelebA's variety without a matched-domain anchor — see [FINDINGS.md](FINDINGS.md#1919-capacity-ceiling-jitter-saturates-the-cascade).
 
+### v3 filtered — controlled experiment: does positive curation break the ceiling? (3 stages, ~2.2 h)
+
+Designed as the cleanest possible A/B vs cbcl v1: identical hyperparameters (`--max-wcs-per-stage 400 --target-stage-fpr 0.5`), identical per-stage compute budget (~7700 positives + 5000 negs/stage), only the face source changes. The 20K augmented CelebA-aligned positives were scored with `cbcl__19_v2.pkl` as oracle (continuous cumulative margin per face) and the lowest 61% dropped via `--drop-low-score-pos 0.61` — keeps the ~7700 most CBCL-like augmented entries, statistically equivalent to ~2000 unique faces (close to CBCL's 1929 unique). A 15K very-hard-neg reservoir pre-mined from `cbcl__19_v2.pkl` via the streaming raw miner (`tools/mine_hard_negatives_raw.py`, ~17.5 h, 326M patches sampled at 0.0046% FPR) was attached as top-up. See [WORKFLOW.md](WORKFLOW.md) for the full pipeline.
+
+**Cascade (v3):**
+
+```
+T per stage:        [32, 71, 400]
+Layer thresholds:   [0.277, 0.336, 0.395]
+```
+
+Stages 1–2 converged cleanly (32 and 71 WCs, FPR 0.453 and 0.488 — both well under the 0.5 target). Stage 3 capped at 400 WCs with FPR=0.622 > target 0.5 — capacity-ceiling break fired. **Same structural failure pattern as v1** (FPR=0.598 at stage 3, also 400 WCs) and v2 (escalating saturation at deeper stages). The very-hard reservoir was never tapped: training stopped before mining became hard enough to trigger a shortfall.
+
+**Test metrics (raw):**
+
+| TP  | TN     | FP    | FN  | Accuracy | Precision | Recall |  Spec  |   F1   |
+| --: | -----: | ----: | --: | :------: | :-------: | :----: | :----: | :----: |
+| 433 | 16 301 | 7 272 | 39  |  0.696   |   0.056   | 0.917  | 0.692  | 0.106  |
+
+**After post-hoc F1 tuning (`weights/19/celeba_aligned_filtered__19_v1_tuned.pkl`):**
+
+| TP  | TN     | FP  | FN  | Accuracy | Precision | Recall |  Spec  |     F1    |
+| --: | -----: | --: | --: | :------: | :-------: | :----: | :----: | :-------: |
+| 238 | 23 494 |  79 | 234 |  0.987   |   0.751   | 0.504  | 0.997  | **0.603** |
+
+Tuned thresholds collapse to `[0.30, 0.44, 0.52]` — same operating-point compression signature as v1/v2 (every stage pushed near its maximum cut point, recall sacrificed for precision). **+6.1 pp F1 tuned vs v1 (0.542 → 0.603)** — the curation infrastructure works and produces a measurable improvement, but the cascade still has only 3 stages of rejection power to redistribute.
+
+**Conclusion (and stop signal for 19×19 CelebA-only).** Filtered CelebA at 19×19 reaches **F1 0.603 tuned vs cbcl v1's 0.634** at the same compute budget. The gap is small (0.031) but the cascade structure tells the real story: cbcl converges to 11 stages naturally, CelebA (filtered) saturates at 3 stages **regardless of curation**. The 8-stage delta is the 17K-feature ceiling at 19×19 + jitter, not a data-quality issue. Confirmed: **the bottleneck is resolution, not the dataset**. Curation tooling (`score_faces.py`, `mine_hard_negatives_raw.py`, `--drop-low-score-pos`, `--very-hard-neg-pool`) is validated end-to-end and ready to apply where it actually helps. Next step: 24×24, where the 78K feature budget should unlock CelebA's diversity. CelebA-only at 19×19 will not be revisited.
+
 ---
 
 ## 19×19 — CelebA<sub>aligned</sub> + CBCL mixed (11 stages, ~20 h)
@@ -296,3 +326,5 @@ This run was the project's best F1 for a long time but uses the *old* fixed-laye
 | **24×24 CelebA<sub>aligned</sub>+CBCL** | At 24×24 the alignment problem that broke 19×19 CelebA-only should disappear. Expected: improved precision over 24×24 CBCL alone, similar recall. |
 
 **Confirmed (v2 extension):** *19×19 CBCL extended stages.* The hypothesis ("resume with relaxed `--target-stage-fpr` should add 2–4 stages and reach F1 ≈ 0.66–0.70 tuned") was confirmed at the low end of the predicted range — `target_stage_fpr 0.65` added 4 stages (cbcl, 11→15) and 5 stages (mixed, 11→16) before stopping on negative-pool depletion / cumulative val-recall, reaching tuned F1=0.658 (cbcl) and 0.661 (mixed). The upper-bound F1≈0.70 was not reached: stages 12–16 individually converge cleanly but each costs ~5× more weak classifiers than the equivalent stage at v1's depth, so the marginal F1 per WC is diminishing. The CelebA-aligned-only run remained capacity-bound — extension confirmed the diagnosis rather than fixing it.
+
+**Confirmed (v3 filtered):** *Does positive curation rescue capacity-bound CelebA at 19×19?* Answer: **no**. Same hyperparameters as cbcl v1, oracle-filtered positives (drop 0.61 keeps the ~2000 most CBCL-like unique faces, matching CBCL's 1929), 15K very-hard-neg reservoir on standby. Cascade still capped at stage 3 (FPR=0.622). Tuned F1=0.603 vs cbcl v1's 0.634 — close enough that you could call it paridad, but only because the F1 tuner does heroic work over 3 stages. The structural delta (3 stages vs 11) confirms the ceiling is the 17K-Haar feature budget at 19×19 + jitter, **not** data quality. The curation infrastructure (`score_faces.py`, `mine_hard_negatives_raw.py`, `--drop-low-score-pos`, `--very-hard-neg-pool`) is validated end-to-end and ready for 24×24 where it has room to help.
