@@ -176,10 +176,40 @@ def gather_benchmark_negatives(ds_train, benchmark: str, resolution: int,
     return arr
 
 
+def _shrink_npy_first_dim(path: Path, new_n: int, chunk: int = 100_000) -> None:
+    """Shrink an .npy file's first dim from N to `new_n` (`new_n < N`) by
+    streaming chunks into a temp file, then renaming over the original.
+
+    Used only when `build_caltech_pool` ends a pass with no progress before
+    hitting the target — never the hot path. Avoids loading the full memmap
+    into RAM (the whole point of memmapping it in the first place).
+    """
+    src = np.load(path, mmap_mode='r')
+    if new_n >= len(src):
+        return
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    dst = np.lib.format.open_memmap(
+        tmp, mode='w+', dtype=src.dtype,
+        shape=(new_n,) + src.shape[1:])
+    for i in range(0, new_n, chunk):
+        j = min(i + chunk, new_n)
+        dst[i:j] = src[i:j]
+    dst.flush()
+    del dst
+    del src
+    tmp.replace(path)
+
+
 def build_caltech_pool(ds_negatives, resolution: int, n_patches: int,
                        patches_per_image: int,
-                       rng: np.random.Generator) -> np.ndarray:
+                       rng: np.random.Generator,
+                       out_path: Path) -> np.ndarray:
     """Sample random patches from Caltech-256 grayscale at the target resolution.
+
+    Writes directly to `out_path` as an .npy memmap so peak RAM stays bounded
+    regardless of `n_patches`. A 50M-patch pool at 24×24 is 28.8 GB and an
+    in-RAM `np.empty(...)` would get OOM-killed on most laptops; the memmap
+    lets the OS stream dirty pages to disk as it fills.
 
     Multi-pass: walks the (shuffled) image set repeatedly and pulls
     `patches_per_image` fresh random crops per image per pass. Each pass
@@ -188,13 +218,17 @@ def build_caltech_pool(ds_negatives, resolution: int, n_patches: int,
     far more than we sample). Stops when `n_patches` is reached or no usable
     image remains (every image smaller than `resolution`).
     """
+    size_gb = n_patches * resolution * resolution / 1e9
     print(f"Building Caltech pool: {n_patches:,} patches @ {resolution}×{resolution}")
+    print(f"\t- memmap → {out_path} (~{size_gb:.1f} GB on disk)")
     ds_caltech = ds_negatives.filter(lambda x: x["source"] == "caltech")
     n_imgs = len(ds_caltech)
     print(f"\t- {n_imgs:,} Caltech source images available "
           f"(~{n_imgs * patches_per_image:,} patches/pass)")
 
-    pool = np.empty((n_patches, resolution, resolution), dtype=np.uint8)
+    pool = np.lib.format.open_memmap(
+        out_path, mode='w+', dtype=np.uint8,
+        shape=(n_patches, resolution, resolution))
     filled = 0
     skipped_total = 0
     pbar = tqdm(total=n_patches, desc="Caltech pool", unit="patch")
@@ -228,13 +262,16 @@ def build_caltech_pool(ds_negatives, resolution: int, n_patches: int,
             break
 
     pbar.close()
+    pool.flush()
     if pass_idx > 1:
         print(f"\t- completed {pass_idx} passes over the image set")
     if skipped_total:
         print(f"\t- skipped {skipped_total} images smaller than {resolution}px")
     if filled < n_patches:
-        print(f"\t! only filled {filled:,}/{n_patches:,} patches")
-        pool = pool[:filled]
+        print(f"\t! only filled {filled:,}/{n_patches:,} patches — shrinking file")
+        del pool
+        _shrink_npy_first_dim(out_path, filled)
+        pool = np.load(out_path, mmap_mode='r')
     return pool
 
 
@@ -419,10 +456,11 @@ def main():
     print(f"\n[3/5] Building negative pools (neg-source={args.neg_source})...")
     neg_seed = None
     caltech_pool = None
+    caltech_pool_path = out_dir / "caltech_pool.npy"
     if args.neg_source == "caltech":
         caltech_pool = build_caltech_pool(
             ds["negatives"], args.resolution, args.pool_size,
-            args.patches_per_image, rng)
+            args.patches_per_image, rng, out_path=caltech_pool_path)
     elif args.neg_source == "benchmark":
         bench_neg = gather_benchmark_negatives(
             ds["train"], benchmark, args.resolution, augment=args.augment)
@@ -435,7 +473,7 @@ def main():
             ds["train"], benchmark, args.resolution, augment=args.augment)
         caltech_pool = build_caltech_pool(
             ds["negatives"], args.resolution, args.pool_size,
-            args.patches_per_image, rng)
+            args.patches_per_image, rng, out_path=caltech_pool_path)
 
     # =====================================================================
     # 4) TEST — from benchmark test split (untouched)
@@ -459,7 +497,10 @@ def main():
         np.save(out_dir / "val_pos.npy", val_pos)
     elif (out_dir / "val_pos.npy").exists():
         (out_dir / "val_pos.npy").unlink()  # stale from previous run
-    np.save(out_dir / "caltech_pool.npy", caltech_pool)
+    # build_caltech_pool memmaps directly to disk; only save here when the
+    # pool is an in-RAM array (neg-source=benchmark, where pool == bench_neg).
+    if not isinstance(caltech_pool, np.memmap):
+        np.save(out_dir / "caltech_pool.npy", caltech_pool)
     neg_seed_path = out_dir / "neg_seed.npy"
     if neg_seed is not None:
         np.save(neg_seed_path, neg_seed)

@@ -37,7 +37,16 @@ def _load_data(data_dir):
         raise FileNotFoundError(
             f"Missing {missing} under {data_dir}. "
             f"Run `python tools/prepare_data.py` first.")
-    bundles = {k: np.load(p) for k, p in paths.items()}
+    # caltech_pool can be tens of GB at production scale (e.g. 100M patches
+    # @ 24×24 ≈ 57 GB) — always memmap. The mining code in violajones.py
+    # already reads it as random-ordered contiguous chunks for prefetch
+    # friendliness, so memmap is bit-for-bit equivalent to a full load.
+    # train_pos / val_pos are MB-sized and stay in RAM.
+    bundles = {
+        "train_pos": np.load(paths["train_pos"]),
+        "val_pos": np.load(paths["val_pos"]),
+        "caltech_pool": np.load(paths["caltech_pool"], mmap_mode="r"),
+    }
     seed_path = os.path.join(data_dir, "neg_seed.npy")
     bundles["neg_seed"] = np.load(seed_path) if os.path.exists(seed_path) else None
     return bundles

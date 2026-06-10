@@ -156,8 +156,24 @@ class ViolaJones:
         for stage_idx in range(start_stage, max_stages):
             print("\n[CascadeClassifier] Stage {}/≤{} (max_wcs={})".format(
                 stage_idx + 1, max_stages, max_wcs))
-            if len(current_negs_X) == 0 or len(current_negs_X) < getattr(self, 'min_stage_negatives', 0):
-                print(f"Cascade found {len(current_negs_X)} negatives (requires >= {getattr(self, 'min_stage_negatives', 0)}). Stopping early.")
+            min_neg = getattr(self, 'min_stage_negatives', 0)
+            # Stage 1 of a fresh run samples from the fixed-size seed pool
+            # (capped at len(neg_seed)), not from hard-neg mining — so the
+            # `min_stage_negatives` floor doesn't apply there: it's a
+            # mining-health check, and stage 1 isn't doing any mining.
+            # All later stages (and any resumed run) DO mine, so the
+            # floor applies normally.
+            seed_bound_stage1 = (stage_idx == 0 and start_stage == 0)
+            if len(current_negs_X) == 0:
+                print(f"Cascade found 0 negatives. Stopping early.")
+                break
+            if seed_bound_stage1 and len(current_negs_X) < min_neg:
+                print(f"\tStage 1 seed pool yields {len(current_negs_X):,} "
+                      f"(< min_stage_negatives={min_neg:,}); proceeding "
+                      f"anyway since stage 1 is bounded by seed size, "
+                      f"not mining capacity.")
+            elif not seed_bound_stage1 and len(current_negs_X) < min_neg:
+                print(f"Cascade found {len(current_negs_X)} negatives (requires >= {min_neg}). Stopping early.")
                 break
 
             print("Stage negatives: {:,}".format(len(current_negs_X)))

@@ -270,6 +270,24 @@ The natural follow-up to v2: if CelebA-only saturates because the *aligned* data
 
 ---
 
+## 24×24: the ceiling moves up, but it's still there
+
+The 19×19 work converged on a single prediction: move to 24×24 (~60K features vs ~17K) and CelebA-only should stop saturating. The `celeba_aligned__24_v1` run (10K unique CelebA faces, jitter=1 + augment = 39.2K positives after a 2% oracle-score drop, 10K negs/stage, `--target-stage-fpr 0.5`) tested it directly.
+
+**The ceiling did move up — from 3 stages (19×19) to 9 stages (24×24).** That's the headline: at 24×24 the same dataset that collapsed at stage 3 trains a 9-stage cascade with naturally early-stopping stages (30, 36, 25, 45, 47, 336, 95, 457 WCs) before stage 9 finally hit the 800-WC cap with FPR=0.653 > 0.5. The feature budget genuinely absorbs CelebA's variety where 19×19 couldn't. CelebA at 24×24 is a viable face source — the central hypothesis of the whole 19×19 arc, confirmed.
+
+**But three hard realities showed up:**
+
+1. **Late-stage cost explodes.** Per-stage wall time was not linear in WC count — it ballooned with depth as each `_best_stump` call sorts a wider hard-neg margin. Stage 6 (336 WCs) took 26 h; stage 8 (457 WCs) took 35 h; stage 9 (800 WCs) took **71 h**. Total run: **156 h** (~6.5 days). My pre-run estimate of 50-90 h was wrong by ~2× — WC-count extrapolation from the smoke test does not hold once stages get deep, because cost scales with `WCs × samples × log(samples)` and the deep stages need many more WCs.
+
+2. **Weak-classifier count per stage is NOT monotonic, and that's expected.** The progression 30→36→25→45→47→336→95→457→800 looks erratic. It isn't a bug: each stage trains against a *freshly mined* hard-neg set whose exact geometry in Haar-feature space is stochastic, and the seed/Caltech mix ratio shifts with depth (the fixed 9096-patch CBCL seed depletes faster than the effectively-infinite Caltech pool, so later stages see proportionally fewer face-like seed negatives). A stage whose negs happen to land in a region the accumulated earlier WCs already cover finishes in 25-95 WCs; one that hits an unexplored corner needs 336-800. The global trend is monotonic (early mean ~40 WCs, late mean ~400) but stage-to-stage is noisy. The original paper hid this with a hand-fixed `--layers` schedule; the adaptive trainer surfaces the real cost.
+
+3. **`extend_stage.py` does not rescue a saturated stage — extending it is a wash.** A custom tool was built to extend stage 9 from 800 → 1200 WCs in place (truncate to 8 stages, re-mine the same hard-neg difficulty, replay the 800 saved rounds to reconstruct AdaBoost state deterministically, then continue to round 1200). It ran 31 h for **no net gain**: stage-9 FPR *degraded* 0.653 (800 WCs) → 0.751 (1200 WCs), benchmark F1 (raw) dropped 0.521 → 0.510, and after F1 tuning the two are statistically tied (0.6286 v1 vs 0.6298 ext1200 — a 0.1 pp difference, inside the noise). The mechanism is the same AdaBoost-saturation signature as the 19×19 v2 extension: the 400 new WCs carry alpha ≈ 0.09 (near-noise contributions), they compress the val-positive score range, and the recalibrated threshold rises (0.4717 → 0.4734) to preserve 99% recall — a higher threshold lets *more* negatives through. The tuner papers over the raw degradation by re-finding an operating point, which is why the tuned F1s converge — but the 31 h bought nothing the tuner couldn't already extract from the 800-WC version. **Adding weak classifiers to a stage already at its information ceiling raises FPR, it doesn't lower it.** Once `pos_p1 < neg_p99` (the hardest positives overlap the hardest negatives in score space, as the stage-9 diagnose shows: pos_p1=0.433 < neg_p99=0.491), no number of additional Haar stumps separates them.
+
+**Practical takeaway for 24×24.** The model is near its achievable ceiling at 9 stages. The highest-ROI remaining action is post-hoc threshold tuning (free, ~1 min — it lifted this run from raw F1=0.521 to tuned 0.629, +11 pp), not more training. Truncate-and-resume to add stages costs 30-70 h *per stage* with only ~0.01 of cumulative-recall headroom left before the `min_cascade_recall` floor stops it — so realistically +1 stage for +1-3 pp F1. Threshold tuning gives the same precision/recall trade-off that "drop more positives and retrain" would, but for free and reversibly: the lever for "stricter model, higher precision" is the per-stage cut point, not the training-set composition. **CelebA-only at 24×24 tuned reaches F1=0.629 on the CBCL benchmark — ~3 pp below cbcl-on-cbcl (0.660), which is exactly the "no CBCL in training" penalty since the benchmark *is* CBCL. On real images the celeba-only model produces noticeably cleaner, more diverse detections** (8/9 faces on `people.png` with near-zero false positives), which is the actual goal — the benchmark gap is a measurement artifact of testing a general detector on one specific distribution.
+
+---
+
 ## What worked vs what didn't
 
 | Change                                          | Effect                                          | Why                                                              |
@@ -287,7 +305,9 @@ The natural follow-up to v2: if CelebA-only saturates because the *aligned* data
 | CelebA-only at 19×19 (raw, no alignment)        | Recall 0.017                                    | Pixel alignment mismatch with CBCL benchmark                     |
 | CelebA-only at 19×19 (aligned, jitter=2)        | Cascade caps at 3 stages, F1=0.113              | Variety exceeds Haar-feature capacity                            |
 | CelebA-only at 19×19 (aligned, filtered drop 0.61) | Still caps at 3 stages, tuned F1=0.603       | Curation lifts operating point +6 pp but doesn't break ceiling   |
+| **CelebA-only at 24×24 (aligned)**              | **9 natural stages (vs 3 at 19×19)**            | 60K features absorb CelebA's variety — ceiling moves up          |
 | Adding stages to a saturated cascade            | Makes recall worse                              | More rejection on already-broken positives = lower recall        |
+| Extending a saturated stage (`extend_stage.py`) | FPR 0.65 → 0.75, F1 raw 0.521 → 0.510 (worse)   | Near-noise WCs raise the recalibrated threshold → more negs pass  |
 | H-flip augmentation                             | Marginal                                        | Symmetric Haar features partially already invariant to it        |
 | Positive curation (`--drop-low-score-pos`)      | +6 pp F1 on capacity-bound runs                 | Removes residual misaligned crops; doesn't fix the feature cap   |
 | Streaming raw very-hard mining                  | 15K hard negs at 0.0046% FPR (vs ~5K from pool) | No finite intermediate pool — scans HF raw until target reached  |

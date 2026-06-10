@@ -12,8 +12,10 @@ Detailed metrics for every training run, in chronological order. All numbers are
 | `weights/19/celeba_aligned+cbcl__19_v1_tuned.pkl`         |   19×19    | CelebA<sub>aligned</sub>+CBCL, F1-tuned |   11   | 0.614  | 0.994 |   0.639   |
 | `weights/19/cbcl__19_v1_tuned.pkl`                        |   19×19    | CBCL, F1-tuned                          |   11   | 0.583  | 0.995 |   0.634   |
 | `weights/19/celeba_aligned_filtered__19_v1_tuned.pkl`     |   19×19    | CelebA<sub>aligned</sub> (filtered drop 0.61), F1-tuned | 3 | 0.504  | 0.997 |   0.603   |
+| `weights/24/cbcl__24_smoke_tuned.pkl`                     |   24×24    | CBCL (smoke test, adaptive trainer), F1-tuned | 10 | 0.602  | 0.996 | **0.660** |
+| `weights/24/celeba_aligned__24_v1_tuned.pkl`              |   24×24    | CelebA<sub>aligned</sub> only, F1-tuned  |   9    | 0.559  | 0.996 |   0.629   |
 
-After the v2 extension (resume from v1 with `--max-wcs-per-stage 800 --target-stage-fpr 0.65`), the 19×19 tuned models now **overtake the historical 24×24 best** by ~0.5–0.8 pp F1. The bug fixes documented in [FINDINGS.md](FINDINGS.md) plus the extra ~4 stages buy the rest of the gap.
+After the v2 extension (resume from v1 with `--max-wcs-per-stage 800 --target-stage-fpr 0.65`), the 19×19 tuned models overtake the *historical* 24×24 best by ~0.5–0.8 pp F1. The **24×24 CBCL smoke test** (adaptive trainer, post-fix calibration) ties them at F1=0.660 with fewer stages. The **24×24 CelebA-only** model is the project's most real-world-robust detector despite a lower benchmark F1 (0.629) — see its section below for why the benchmark number understates a general detector.
 
 ## Shared hyperparameters (19×19 runs)
 
@@ -300,6 +302,58 @@ The 0.06 F1 gap between raw and tuned measures exactly this: how much "globally 
 
 ---
 
+## 24×24 — CBCL smoke test (10 stages, ~25 h) — *adaptive trainer, capacity probe*
+
+A short run to answer one question: does the 24×24 feature budget (~60K features vs ~17K at 19×19) actually relieve the capacity ceiling? Data: `--face-source cbcl --resolution 24 --augment --jitter 2 --pool-size 100000000`. Trainer: `--max-stages 10 --max-wcs-per-stage 300 --target-stage-fpr 0.5 --target-neg-per-stage 5000`.
+
+**Cascade:**
+
+```
+T per stage:        [11, 4, 38, 43, 207, 27, 78, 187, 189, 300]
+Layer thresholds:   [0.295, 0.351, 0.388, 0.408, 0.444, 0.420, 0.444, 0.458, 0.464, 0.468]
+```
+
+Stages 1–9 converged on `target_stage_fpr 0.5`; stage 10 capped at 300 WCs (FPR=0.546). The WC count is non-monotonic (4 → 207 → 27 → …) — expected, since each stage trains against a freshly mined hard-neg set whose geometry is stochastic and whose seed/Caltech mix shifts with depth.
+
+**Test metrics (raw):** recall 0.750, spec 0.976, precision 0.380, **F1 0.505**.
+
+**After F1 tuning (`weights/24/cbcl__24_smoke_tuned.pkl`):** recall 0.602, spec 0.996, precision 0.730, **F1 0.660** (+15.5 pp from tuning). Tuned thresholds `[0.38, 0.30, 0.30, 0.30, 0.50, 0.46, 0.50, 0.48, 0.48, 0.48]`.
+
+**Verdict:** ties the best 19×19 models (0.658–0.661) and the historical 24×24 best (0.653) with only 10 stages from the adaptive trainer. Confirms the hypothesis: 24×24 relieves the ceiling. One surprise — **stage cost is much higher than WC-count extrapolation predicts** (this run took ~25 h, partly inflated by a sleep-stalled stage 5; deep stages dominate). This timing lesson governed the celeba production run below.
+
+---
+
+## 24×24 — CelebA<sub>aligned</sub> only (9 stages, ~156 h) — *the resolution hypothesis, confirmed*
+
+The payoff run. CelebA-only capped at **3 stages at 19×19** (F1 0.542–0.603 tuned, structurally broken). At 24×24 the same source trains a **9-stage cascade** — the central prediction of the entire 19×19 arc, validated.
+
+**Data:** `--face-source celeba_aligned --n-faces 10000 --resolution 24 --augment --jitter 1`, then oracle-scored with `cbcl__24_smoke.pkl` and the bottom 2% dropped (`--drop-low-score-pos 0.02`) → 39 200 positives. The score grid showed the bottom percentiles at 24×24 are *hard real faces* (glasses, strong shadows, expressions), not misaligned crops as at 19×19 — so the drop was kept minimal. Negatives: CBCL seed (9 096) + Caltech pool (100M), `--target-neg-per-stage 10000`. Trainer: `--max-wcs-per-stage 800 --target-stage-fpr 0.5`.
+
+**Cascade:**
+
+```
+T per stage:        [30, 36, 25, 45, 47, 336, 95, 457, 800]
+Layer thresholds:   [0.342, 0.364, 0.370, 0.405, 0.419, 0.455, 0.446, 0.468, 0.472]
+```
+
+Stages 1–8 converged on `target_stage_fpr 0.5`; stage 9 capped at the 800-WC budget with FPR=0.653. Cumulative val recall ended at 0.96 (floor 0.95). **Per-stage wall time ballooned with depth: stage 6 = 26 h, stage 8 = 35 h, stage 9 = 71 h** — total 156 h (~6.5 days). Deep stages dominate because `_best_stump` cost scales with `WCs × samples × log(samples)` and late stages need both more WCs and a wider hard-neg margin.
+
+**Test metrics (raw):** recall 0.712, spec 0.980, precision 0.411, **F1 0.521**.
+
+**After F1 tuning (`weights/24/celeba_aligned__24_v1_tuned.pkl`):**
+
+| TP  | TN     | FP  | FN  | Accuracy | Precision | Recall |  Spec  |     F1    |
+| --: | -----: | --: | --: | :------: | :-------: | :----: | :----: | :-------: |
+| 264 | 23 469 | 104 | 208 |  0.987   |   0.717   | 0.559  | 0.996  | **0.629** |
+
+Tuned thresholds `[0.48, 0.30, 0.34, 0.44, 0.50, 0.48, 0.30, 0.48, 0.48]` — +10.8 pp from tuning.
+
+**Why 0.629 understates the model.** The benchmark *is* CBCL, and this model never sees a CBCL face in training (only CBCL non-faces as the negative seed). The ~3 pp gap to cbcl-on-cbcl (0.660) is precisely that domain mismatch. On real images the celeba-only model is the **cleanest detector in the project**: on `images/people.png` it finds 8/9 faces with near-zero false positives after tuning + `--nms-threshold 0.2 --detect-min-face 24 --detect-min-score 0.15`; on `i1.jpg` it isolates the single large face with one stray box. The diversity of CelebA (poses, lighting, expressions) is exactly what generalizes off-benchmark — which is invisible to a CBCL-only F1 score.
+
+**Failed extension (`extend_stage.py`, +31 h).** Stage 9 was extended in place from 800 → 1200 WCs to try to push its FPR below 0.5. It degraded the raw FPR (0.653 → 0.751) and was a wash after tuning (0.6298 vs v1's 0.6286 — 0.1 pp, noise). Confirms the AdaBoost-saturation lesson: once `pos_p1 < neg_p99` at a stage (here 0.433 < 0.491), more weak classifiers raise the recalibrated threshold rather than separating the classes. See [FINDINGS.md §24×24](FINDINGS.md#2424-the-ceiling-moves-up-but-its-still-there). **`weights/24/celeba_aligned__24_v1_tuned.pkl` is the final, recommended general-purpose detector.**
+
+---
+
 ## 24×24 — CBCL faces, deep cascade *(historical, fixed `--layers` schedule)*
 
 **Data:** `--face-source cbcl --resolution 24 --augment --jitter 2`.
@@ -322,8 +376,9 @@ This run was the project's best F1 for a long time but uses the *old* fixed-laye
 
 | Experiment                              | Hypothesis                                                                                  |
 | --------------------------------------- | ------------------------------------------------------------------------------------------- |
-| **24×24 CBCL, adaptive trainer**        | The 24×24 Haar budget (~78 K features) should absorb the discriminative load that 19×19 (~17 K) cannot. Expected: 12–15 stages, F1 ≈ 0.70 raw, 0.75+ tuned. |
-| **24×24 CelebA<sub>aligned</sub>+CBCL** | At 24×24 the alignment problem that broke 19×19 CelebA-only should disappear. Expected: improved precision over 24×24 CBCL alone, similar recall. |
+| **24×24 CelebA<sub>aligned</sub>+CBCL** | Adding upscaled CBCL faces to the 24×24 celeba-only positives should recover the ~3 pp benchmark gap (CBCL-on-CBCL), at the cost of some real-image diversity. Optional — only worth it to chase a higher benchmark number; the celeba-only model is already the better general detector. |
+
+**Confirmed (24×24 adaptive trainer):** *Does 24×24 relieve the capacity ceiling?* **Yes.** The CBCL smoke test reached 10 stages / tuned F1=0.660 (ties the best 19×19 models). CelebA-only — broken at 3 stages at 19×19 — trained 9 stages / tuned F1=0.629 at 24×24, and is the project's cleanest real-image detector. The predicted "12–15 stages, F1 0.75+ tuned" was optimistic: realistic depth is 9–10 stages and tuned F1 ≈ 0.63–0.66, with deep stages costing 30–70 h each (the celeba run was 156 h total). Extending a capped stage in place (`extend_stage.py`) does not help — see the 24×24 sections above.
 
 **Confirmed (v2 extension):** *19×19 CBCL extended stages.* The hypothesis ("resume with relaxed `--target-stage-fpr` should add 2–4 stages and reach F1 ≈ 0.66–0.70 tuned") was confirmed at the low end of the predicted range — `target_stage_fpr 0.65` added 4 stages (cbcl, 11→15) and 5 stages (mixed, 11→16) before stopping on negative-pool depletion / cumulative val-recall, reaching tuned F1=0.658 (cbcl) and 0.661 (mixed). The upper-bound F1≈0.70 was not reached: stages 12–16 individually converge cleanly but each costs ~5× more weak classifiers than the equivalent stage at v1's depth, so the marginal F1 per WC is diminishing. The CelebA-aligned-only run remained capacity-bound — extension confirmed the diagnosis rather than fixing it.
 
