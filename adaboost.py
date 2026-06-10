@@ -1,4 +1,5 @@
 import math
+import os
 import time
 import numpy as np
 from tqdm.auto import tqdm
@@ -34,7 +35,8 @@ class AdaBoost:
     # _best_stump at ~0.75 GB instead of ~3 GB. Bit-identical results;
     # slightly more loop iterations but much less memory pressure.
     def train(self, X, y, features, feature_chunk=500, target_stage_fpr=None,
-              X_val=None, target_recall=None):
+              X_val=None, target_recall=None, precompute_sort_index=False,
+              sort_index_dir=None):
         """
         Boost `n_estimators` decision-stump rounds.
 
@@ -88,6 +90,35 @@ class AdaBoost:
         # Initial weights: balanced between classes (Viola-Jones §3, eq. 1).
         weights = np.where(y == 1, 0.5 / pos_num, 0.5 / neg_num).astype(np.float32)
 
+        # Precompute sorting indices if requested to speed up training.
+        # Uses a disk-backed memmap to avoid consuming ~11 GB of RAM; the OS
+        # pages in only the chunk sliced by _best_stump each round.
+        sort_idx = None
+        sort_idx_path = None
+        if precompute_sort_index:
+            _dir = sort_index_dir or os.path.join(os.getcwd(), "_cache")
+            os.makedirs(_dir, exist_ok=True)
+            sort_idx_path = os.path.join(_dir, "_sort_idx_stage.npy")
+            idx_dtype = np.uint16 if n_samples <= 65535 else np.int32
+            print("Precomputing sort index ({}) → {} ...".format(np.dtype(idx_dtype).name, sort_idx_path))
+            start_sort = time.time()
+            # Write phase: create writable memmap, fill in chunks, flush.
+            _wmap = np.memmap(sort_idx_path, dtype=idx_dtype, mode='w+',
+                              shape=(n_features, n_samples))
+            for f0 in range(0, n_features, feature_chunk):
+                f1 = min(f0 + feature_chunk, n_features)
+                _wmap[f0:f1] = np.argsort(
+                    X[f0:f1], axis=1, kind='quicksort').astype(idx_dtype)
+            _wmap.flush()
+            del _wmap
+            # Read phase: reopen as read-only memmap for training.
+            sort_idx = np.memmap(sort_idx_path, dtype=idx_dtype, mode='r',
+                                 shape=(n_features, n_samples))
+            _bytes = n_features * n_samples * np.dtype(idx_dtype).itemsize
+            print("  Sort index precomputed in {:.1f}s  "
+                  "({:.1f} GB on disk, paged on demand)".format(
+                      time.time() - start_sort, _bytes / 1e9))
+
         # Adaptive FPR mode: accumulate weighted scores for the stage
         # negatives (and, in calibrated mode, the validation positives) so
         # we can probe the operating point each round without re-scoring
@@ -110,7 +141,7 @@ class AdaBoost:
             weights /= w_sum
 
             best_j, thr, pol, err, preds = self._best_stump(
-                X, y, weights, feature_chunk=feature_chunk)
+                X, y, weights, feature_chunk=feature_chunk, sort_idx=sort_idx)
 
             if err >= 0.5:
                 # Halting condition: no weak classifier beats random under
@@ -202,7 +233,15 @@ class AdaBoost:
         print("\t- AdaBoost stage: {} weak classifiers in {}".format(
             len(self.clfs), _fmt_time(start_time)))
 
-    def _best_stump(self, X, y, weights, feature_chunk):
+        # Clean up memmap sort index file if we created one.
+        if sort_idx_path is not None:
+            del sort_idx
+            try:
+                os.remove(sort_idx_path)
+            except OSError:
+                pass
+
+    def _best_stump(self, X, y, weights, feature_chunk, sort_idx=None):
         """
         Vectorized pass over all features. For each feature, find the
         (threshold, polarity) minimizing weighted error; then pick the
@@ -227,12 +266,15 @@ class AdaBoost:
             f1 = min(f0 + feature_chunk, n_features)
             X_chunk = X[f0:f1]                                  # (cf, n_samples)
 
-            # Sort feature values per row
-            sort_idx = np.argsort(X_chunk, axis=1, kind='quicksort')
+            if sort_idx is not None:
+                sort_idx_chunk = sort_idx[f0:f1]
+            else:
+                # Sort feature values per row
+                sort_idx_chunk = np.argsort(X_chunk, axis=1, kind='quicksort')
 
             # Take per-feature sorted weight contributions
-            sorted_pos_w = pos_w[sort_idx]                       # (cf, n_samples)
-            sorted_neg_w = neg_w[sort_idx]
+            sorted_pos_w = pos_w[sort_idx_chunk]                       # (cf, n_samples)
+            sorted_neg_w = neg_w[sort_idx_chunk]
             # Exclusive prefix sums = cumsum minus current
             cum_pos = np.cumsum(sorted_pos_w, axis=1) - sorted_pos_w
             cum_neg = np.cumsum(sorted_neg_w, axis=1) - sorted_neg_w
@@ -254,7 +296,7 @@ class AdaBoost:
             if local_err < global_best_err:
                 global_best_err = local_err
                 # Threshold = feature value at the best sorted position
-                sorted_X = np.take_along_axis(X_chunk, sort_idx, axis=1)
+                sorted_X = np.take_along_axis(X_chunk, sort_idx_chunk, axis=1)
                 thr = float(sorted_X[local_j, best_idx[local_j]])
                 pol = 1 if err_pos[local_j, best_idx[local_j]] < err_neg[local_j, best_idx[local_j]] else -1
                 global_best = (f0 + local_j, thr, pol)

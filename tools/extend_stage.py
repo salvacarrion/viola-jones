@@ -98,6 +98,9 @@ def main():
     ap.add_argument("--drop-low-score-pos", type=float, default=0.0,
                     help="Fraction of lowest-scoring positives to drop "
                          "(same as training run)")
+    ap.add_argument("--precompute-sort-index", action="store_true",
+                    help="Precompute and cache sorting indices of training samples in RAM "
+                         "(faster training, but uses significant extra RAM).")
     args = ap.parse_args()
 
     start_time = time.time()
@@ -298,6 +301,31 @@ def main():
     print(f"\nContinuing boosting: rounds {n_existing+1}..{args.new_max_wcs} "
           f"({n_extra} new rounds)")
 
+    # Precompute sorting indices if requested (disk-backed memmap).
+    sort_idx = None
+    sort_idx_path = None
+    if args.precompute_sort_index:
+        sort_idx_dir = os.path.join(data_dir, "_cache")
+        os.makedirs(sort_idx_dir, exist_ok=True)
+        sort_idx_path = os.path.join(sort_idx_dir, "_sort_idx_extend.npy")
+        idx_dtype = np.uint16 if n_samples <= 65535 else np.int32
+        print(f"Precomputing sort index ({np.dtype(idx_dtype).name}) → {sort_idx_path} ...")
+        start_sort = time.time()
+        _wmap = np.memmap(sort_idx_path, dtype=idx_dtype, mode='w+',
+                          shape=(n_features, n_samples))
+        for f0 in range(0, n_features, 500):
+            f1 = min(f0 + 500, n_features)
+            _wmap[f0:f1] = np.argsort(
+                X_f_stage[f0:f1], axis=1, kind='quicksort').astype(idx_dtype)
+        _wmap.flush()
+        del _wmap
+        sort_idx = np.memmap(sort_idx_path, dtype=idx_dtype, mode='r',
+                             shape=(n_features, n_samples))
+        _bytes = n_features * n_samples * np.dtype(idx_dtype).itemsize
+        print("  Sort index precomputed in {:.1f}s  "
+              "({:.1f} GB on disk, paged on demand)".format(
+                  time.time() - start_sort, _bytes / 1e9))
+
     target_fpr = args.target_stage_fpr
     target_recall = args.layer_recall
 
@@ -318,7 +346,7 @@ def main():
         weights /= w_sum
 
         best_j, thr, pol, err, preds = ab._best_stump(
-            X_f_stage, y_stage, weights, feature_chunk=500)
+            X_f_stage, y_stage, weights, feature_chunk=500, sort_idx=sort_idx)
 
         if err >= 0.5:
             pbar.write(f"[Extend] best weak error={err:.4f} >= 0.5; "
@@ -367,6 +395,14 @@ def main():
     print(f"\n  Extended stage: {len(ab.clfs)} total WCs "
           f"({len(ab.clfs) - n_existing} new) in "
           f"{get_pretty_time(boost_start)}")
+
+    # Clean up memmap sort index file if we created one.
+    if sort_idx_path is not None:
+        del sort_idx
+        try:
+            os.remove(sort_idx_path)
+        except OSError:
+            pass
 
     # ---- 7. Final calibration and save ----
     ab.calibrate(X_val_ii, X_val_std, target_recall=args.layer_recall)

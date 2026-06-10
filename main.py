@@ -58,7 +58,7 @@ def train(data_dir, layer_recall=0.99,
           max_stages=30, max_wcs_per_stage=200, min_wcs_per_stage=1,
           min_cascade_recall=0.80, min_stage_negatives=0, resume_from=None,
           hard_neg_pool=None, very_hard_neg_pool=None,
-          drop_low_score_pos=0.0):
+          drop_low_score_pos=0.0, precompute_sort_index=False):
     bundles = _load_data(data_dir)
     train_pos = bundles["train_pos"]
     val_pos = bundles["val_pos"]
@@ -168,7 +168,11 @@ def train(data_dir, layer_recall=0.99,
                          max_wcs_per_stage=max_wcs_per_stage,
                          min_wcs_per_stage=min_wcs_per_stage,
                          min_cascade_recall=min_cascade_recall,
-                         min_stage_negatives=min_stage_negatives)
+                         min_stage_negatives=min_stage_negatives,
+                         precompute_sort_index=precompute_sort_index)
+    # Also patch resumed instance
+    if resume_from is not None:
+        clf.precompute_sort_index = precompute_sort_index
     clf.train(train_pos, val_pos, neg_pool,
               neg_seed=neg_seed,
               very_hard_pool=vh,
@@ -176,7 +180,8 @@ def train(data_dir, layer_recall=0.99,
               neg_sample_budget=neg_sample_budget,
               seed=seed,
               checkpoint_path=out_path,
-              pos_cache_suffix=pos_cache_suffix)
+              pos_cache_suffix=pos_cache_suffix,
+              precompute_sort_index=precompute_sort_index)
     print("Training finished!")
     print(f"Final weights -> {out_path}.pkl")
     return clf
@@ -352,6 +357,9 @@ if __name__ == "__main__":
                              "Each stage stops adding weak classifiers once training-"
                              "negative FPR drops to this value (default: 0.5). "
                              "Set to 0.0 to disable adaptive mode (fixed-T = --max-wcs-per-stage).")
+    parser.add_argument("--precompute-sort-index", action="store_true",
+                        help="Precompute and cache sorting indices of training samples in RAM "
+                             "(faster training, but uses significant extra RAM).")
 
     # Detect
     parser.add_argument("--detect-images", nargs="+",
@@ -433,7 +441,8 @@ if __name__ == "__main__":
               resume_from=args.resume_from,
               hard_neg_pool=args.hard_neg_pool,
               very_hard_neg_pool=args.very_hard_neg_pool,
-              drop_low_score_pos=args.drop_low_score_pos)
+              drop_low_score_pos=args.drop_low_score_pos,
+              precompute_sort_index=args.precompute_sort_index)
     elif args.mode == "test":
         test(args.weights_path, args.data_dir)
     elif args.mode == "detect":

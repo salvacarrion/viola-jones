@@ -15,7 +15,8 @@ class ViolaJones:
                  max_stages=30, max_wcs_per_stage=200,
                  min_wcs_per_stage=1,
                  min_cascade_recall=0.80,
-                 min_stage_negatives=0):
+                 min_stage_negatives=0,
+                 precompute_sort_index=False):
         self.clfs = []
         # Native training-window size; sliding-window inference starts here
         # and grows by `base_scale`. Overwritten in `train()` based on the
@@ -42,11 +43,13 @@ class ViolaJones:
         self.min_wcs_per_stage = min_wcs_per_stage
         self.min_cascade_recall = min_cascade_recall
         self.min_stage_negatives = min_stage_negatives
+        self.precompute_sort_index = precompute_sort_index
 
     def train(self, train_pos, val_pos, neg_pool, neg_seed=None,
               very_hard_pool=None,
               target_neg_per_stage=3000, neg_sample_budget=100000, seed=42,
-              checkpoint_path=None, pos_cache_suffix=""):
+              checkpoint_path=None, pos_cache_suffix="",
+              precompute_sort_index=False):
         """
         Train a Viola-Jones cascade.
 
@@ -209,7 +212,9 @@ class ViolaJones:
             clf.train(X_f_stage, y_stage, features,
                       target_stage_fpr=getattr(self, 'target_stage_fpr', None),
                       X_val=X_f_val,
-                      target_recall=self.layer_recall)
+                      target_recall=self.layer_recall,
+                      precompute_sort_index=precompute_sort_index,
+                      sort_index_dir=self.features_path)
 
             # Post-train calibration is a no-op when AdaBoost.train already
             # set the threshold via the same val set + target_recall; we keep
