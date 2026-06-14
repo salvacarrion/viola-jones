@@ -308,6 +308,8 @@ The 19×19 work converged on a single prediction: move to 24×24 (~60K features 
 | **CelebA-only at 24×24 (aligned)**              | **9 natural stages (vs 3 at 19×19)**            | 60K features absorb CelebA's variety — ceiling moves up          |
 | Adding stages to a saturated cascade            | Makes recall worse                              | More rejection on already-broken positives = lower recall        |
 | Extending a saturated stage (`extend_stage.py`) | FPR 0.65 → 0.75, F1 raw 0.521 → 0.510 (worse)   | Near-noise WCs raise the recalibrated threshold → more negs pass  |
+| Deepening past stage 10 at 24×24 (v2)           | Stage rejection 31% → 30% → 16% → 6% per stage   | Exponential diminishing returns — surviving negs ≈ faces          |
+| `--precompute-sort-index` (AdaBoost)            | ~5× faster rounds (≈280 s → ≈50 s)              | Caches per-feature argsort; reused every boosting round           |
 | H-flip augmentation                             | Marginal                                        | Symmetric Haar features partially already invariant to it        |
 | Positive curation (`--drop-low-score-pos`)      | +6 pp F1 on capacity-bound runs                 | Removes residual misaligned crops; doesn't fix the feature cap   |
 | Streaming raw very-hard mining                  | 15K hard negs at 0.0046% FPR (vs ~5K from pool) | No finite intermediate pool — scans HF raw until target reached  |

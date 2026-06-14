@@ -6,16 +6,16 @@ Detailed metrics for every training run, in chronological order. All numbers are
 
 | Best model                                                | Resolution | Faces                                   | Stages | Recall | Spec  |    F1    |
 | --------------------------------------------------------- | :--------: | --------------------------------------- | :----: | :----: | :---: | :------: |
+| `weights/24/celeba_aligned__24_v2_s11_tuned.pkl` ⭐        |   24×24    | CelebA<sub>aligned</sub> only, F1-tuned  |   11   | 0.625  | 0.995 | **0.661** |
 | `weights/19/celeba_aligned+cbcl__19_v2_tuned.pkl`         |   19×19    | CelebA<sub>aligned</sub>+CBCL, F1-tuned |   16   | 0.625  | 0.995 | **0.661** |
+| `weights/24/cbcl__24_smoke_tuned.pkl`                     |   24×24    | CBCL (adaptive trainer), F1-tuned       |   10   | 0.602  | 0.996 | **0.660** |
 | `weights/19/cbcl__19_v2_tuned.pkl`                        |   19×19    | CBCL, F1-tuned                          |   15   | 0.606  | 0.995 | **0.658** |
-| `weights/24/cvj_weights_1777843525_tuned.pkl`             |   24×24    | CBCL, F1-tuned                          |   9    | 0.597  | 0.995 | **0.653** |
+| `weights/24/cvj_weights_1777843525_tuned.pkl`             |   24×24    | CBCL (historical fixed-layers), F1-tuned |   9    | 0.597  | 0.995 | **0.653** |
 | `weights/19/celeba_aligned+cbcl__19_v1_tuned.pkl`         |   19×19    | CelebA<sub>aligned</sub>+CBCL, F1-tuned |   11   | 0.614  | 0.994 |   0.639   |
 | `weights/19/cbcl__19_v1_tuned.pkl`                        |   19×19    | CBCL, F1-tuned                          |   11   | 0.583  | 0.995 |   0.634   |
 | `weights/19/celeba_aligned_filtered__19_v1_tuned.pkl`     |   19×19    | CelebA<sub>aligned</sub> (filtered drop 0.61), F1-tuned | 3 | 0.504  | 0.997 |   0.603   |
-| `weights/24/cbcl__24_smoke_tuned.pkl`                     |   24×24    | CBCL (smoke test, adaptive trainer), F1-tuned | 10 | 0.602  | 0.996 | **0.660** |
-| `weights/24/celeba_aligned__24_v1_tuned.pkl`              |   24×24    | CelebA<sub>aligned</sub> only, F1-tuned  |   9    | 0.559  | 0.996 |   0.629   |
 
-After the v2 extension (resume from v1 with `--max-wcs-per-stage 800 --target-stage-fpr 0.65`), the 19×19 tuned models overtake the *historical* 24×24 best by ~0.5–0.8 pp F1. The **24×24 CBCL smoke test** (adaptive trainer, post-fix calibration) ties them at F1=0.660 with fewer stages. The **24×24 CelebA-only** model is the project's most real-world-robust detector despite a lower benchmark F1 (0.629) — see its section below for why the benchmark number understates a general detector.
+The **24×24 CelebA-only v2 (11 stages, ⭐)** is the project's recommended detector: it ties the best benchmark F1 (0.661, level with mixed 19×19 v2) *and* is the most real-image-robust, since it trains on CelebA's pose/lighting diversity at full 24×24 resolution rather than upscaled 19×19 CBCL crops. The benchmark F1 understates it — the test set *is* CBCL, which this model never trains on (only CBCL non-faces as the negative seed). See the [24×24 CelebA section](#2424--celebaaligned-only-9-stages-156-h--the-resolution-hypothesis-confirmed) for the full deepening story.
 
 ## Shared hyperparameters (19×19 runs)
 
@@ -350,7 +350,32 @@ Tuned thresholds `[0.48, 0.30, 0.34, 0.44, 0.50, 0.48, 0.30, 0.48, 0.48]` — +1
 
 **Why 0.629 understates the model.** The benchmark *is* CBCL, and this model never sees a CBCL face in training (only CBCL non-faces as the negative seed). The ~3 pp gap to cbcl-on-cbcl (0.660) is precisely that domain mismatch. On real images the celeba-only model is the **cleanest detector in the project**: on `images/people.png` it finds 8/9 faces with near-zero false positives after tuning + `--nms-threshold 0.2 --detect-min-face 24 --detect-min-score 0.15`; on `i1.jpg` it isolates the single large face with one stray box. The diversity of CelebA (poses, lighting, expressions) is exactly what generalizes off-benchmark — which is invisible to a CBCL-only F1 score.
 
-**Failed extension (`extend_stage.py`, +31 h).** Stage 9 was extended in place from 800 → 1200 WCs to try to push its FPR below 0.5. It degraded the raw FPR (0.653 → 0.751) and was a wash after tuning (0.6298 vs v1's 0.6286 — 0.1 pp, noise). Confirms the AdaBoost-saturation lesson: once `pos_p1 < neg_p99` at a stage (here 0.433 < 0.491), more weak classifiers raise the recalibrated threshold rather than separating the classes. See [FINDINGS.md §24×24](FINDINGS.md#2424-the-ceiling-moves-up-but-its-still-there). **`weights/24/celeba_aligned__24_v1_tuned.pkl` is the final, recommended general-purpose detector.**
+**Failed extension (`extend_stage.py`, +31 h).** Stage 9 was extended in place from 800 → 1200 WCs to try to push its FPR below 0.5. It degraded the raw FPR (0.653 → 0.751) and was a wash after tuning (0.6298 vs v1's 0.6286 — 0.1 pp, noise). Confirms the AdaBoost-saturation lesson: once `pos_p1 < neg_p99` at a stage (here 0.433 < 0.491), more weak classifiers raise the recalibrated threshold rather than separating the classes. See [FINDINGS.md §24×24](FINDINGS.md#2424-the-ceiling-moves-up-but-its-still-there).
+
+### v2 deepening — replace the bloated stage 9 and push depth (+65 h)
+
+The v1 cascade was mis-shaped: cheap early stages then a jump to a single 800-WC stage 9 that capped at FPR 0.653. To get a deeper, leaner, more FP-rejecting cascade (better for real-image robustness), v1 was truncated to its 8 clean stages and resumed with a relaxed FPR target so new stages converge instead of bloating. An AdaBoost speedup (`--precompute-sort-index`, caches the per-feature sort order) cut round time ~5× (≈280 s → ≈50 s/round), which made the 1000+ WC stages affordable.
+
+Resume 1 (`--target-stage-fpr 0.70 --max-wcs 1200`) rebuilt stages 9–11; resume 2 (`--target-stage-fpr 0.80 --max-wcs 1600`) added stage 12. The per-stage FPR trajectory is the cleanest capacity-ceiling demonstration in the project:
+
+| Stage | WCs  | final FPR | rejects | outcome           |
+| :---: | :--: | :-------: | :-----: | :---------------- |
+|   9   |  522 |   0.693   |  ~31%   | converged ✓       |
+|  10   | 1025 |   0.698   |  ~30%   | converged ✓       |
+|  11   | 1200 |   0.837   |  ~16%   | capped (tgt 0.70) |
+|  12   | 1600 |   0.935   |   ~6%   | capped (tgt 0.80) |
+
+Cumulative val recall stayed flat at 0.958 across all four stages — **recall is not the binding constraint at depth; capacity is.** Each added stage rejects exponentially less of the surviving hard negatives while costing more weak classifiers: stage 12 spent 1600 WCs / 24 h to reject 6% of what reached it. At inference every window surviving to stage 12 pays up to 1600 stumps for that 6% — an indefensible ROI. The hard negatives that pass stage 10 are, at 24×24, essentially indistinguishable from faces.
+
+**Final model selection.** Stage 12 is dropped unconditionally (6% rejection / 1600 WCs). The 10/11/12-stage variants were tuned and tested:
+
+| Depth | F1 (tuned) | Recall | Spec  | Precision |
+| :---: | :--------: | :----: | :---: | :-------: |
+|  s10  |   0.651    | 0.633  | 0.994 |   0.670   |
+| **s11** | **0.661** | 0.625 | 0.995 |   0.701   |
+|  s12  |   0.654    | 0.583  | 0.996 |   0.745   |
+
+**s11 wins.** s10 → s11 gains +1.0 pp (stage 11's 16% rejection earns its keep); s11 → s12 loses −0.7 pp (stage 12 over-trades recall for precision). So depth helps up to stage 11 and hurts past it — the F1 peak coincides exactly with where per-stage rejection collapses. Notably the deepening lifted benchmark F1 from v1's 0.629 → **0.661**, not just real-image cleanliness as predicted: replacing v1's single bloated 800-WC stage 9 with three lean rejection stages (9+10+11) raised precision on CBCL too. **`weights/24/celeba_aligned__24_v2_s11_tuned.pkl` (11 stages, tuned F1=0.661) is the final, recommended general-purpose detector** — tied with the project's best benchmark model (mixed 19×19 v2) while being the most real-image-robust (CelebA diversity, 24×24 resolution).
 
 ---
 
