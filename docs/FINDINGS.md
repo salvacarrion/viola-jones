@@ -1,4 +1,4 @@
-# Viola-Jones — Findings
+# Viola-Jones: Findings
 
 Technical notes from building the cascade: design decisions, bugs found and fixed, and lessons that don't fit in the README. For per-run metrics see [RESULTS.md](RESULTS.md).
 
@@ -6,7 +6,7 @@ Technical notes from building the cascade: design decisions, bugs found and fixe
 
 ## Why so many knobs? The seven-fix narrative
 
-A naive Viola-Jones — gather faces, mine random negatives, train 4 boosting stages, run NMS — gets F1 ≈ 0.04 on the CBCL benchmark. The paper's F1 ≈ 0.85 came from millions of curated patches, 38 hand-tuned stages, and machine-time orders of magnitude beyond a laptop. This repo bridges the gap with seven small fixes, each tied to a specific failure observed while building it:
+A naive Viola-Jones (gather faces, mine random negatives, train 4 boosting stages, run NMS) gets F1 ≈ 0.04 on the CBCL benchmark. The paper's F1 ≈ 0.85 came from millions of curated patches, 38 hand-tuned stages, and machine-time orders of magnitude beyond a laptop. This repo bridges the gap with seven small fixes, each tied to a specific failure observed while building it:
 
 | # | Failure observed                                                          | Fix                                                            |
 | - | ------------------------------------------------------------------------- | -------------------------------------------------------------- |
@@ -22,9 +22,9 @@ The sections below walk through each in detail. Independent of these, three clas
 
 ### 1. Negative-domain gap
 
-The first attempt — FDDB faces with Caltech-only negatives — collapsed to F1=0.044. Not because the cascade failed to learn faces (recall was 0.78) but because specificity was 0.33: the cascade called 67 % of CBCL non-faces "face".
+The first attempt (FDDB faces with Caltech-only negatives) collapsed to F1=0.044. Not because the cascade failed to learn faces (recall was 0.78) but because specificity was 0.33: the cascade called 67 % of CBCL non-faces "face".
 
-- Caltech patches are random crops of object photos (textures, edges, uniform regions). Easy to reject — once the cascade learns "not flat, not pure-edge", it's done.
+- Caltech patches are random crops of object photos (textures, edges, uniform regions). Easy to reject: once the cascade learns "not flat, not pure-edge", it's done.
 - CBCL non-faces (the benchmark's negative set) were **curated to be face-like**: face-pose backgrounds, near-symmetric features, similar pixel statistics. Caltech-trained cascades have never seen anything close, so they let them through.
 
 **Fix** (`--neg-source mixed`): pull the ~4 500 CBCL non-faces from the HF train split (×2 with h-flip → 9 096) and use them as the stage-1 seed. Specificity jumped from 0.33 → 0.98 in one training run. This single change is the largest improvement of the whole project.
@@ -37,59 +37,59 @@ The matched seed solved stage 1, but the next 8 stages mined from Caltech only. 
 
 ### 3. Pixel alignment at low resolution
 
-The "CelebA + matched seed at 19×19" run (recall 0.017) is the most surprising failure. CelebA faces are frontal, just like CBCL — so why does the cascade not generalise?
+The "CelebA + matched seed at 19×19" run (recall 0.017) is the most surprising failure. CelebA faces are frontal, just like CBCL, so why does the cascade not generalise?
 
-At 19×19, **alignment matters at the pixel level**, not just pose. CBCL crops are tightly cropped 19×19 native captures with eyes at row 8, nose at row 10, mouth at row 13. CelebA crops are 48×48 native with looser framing (more forehead, hair, neck); bilinearly downsized to 19×19, the same landmarks land at row 7 / 10 / 13. A 1-pixel shift on a 19-pixel face is ~5 % of the face — Haar features tile rectangle sums at fixed grid positions, so the feature distribution moves entirely. The cascade learned "eyes at row 8"; CelebA test faces have eyes at row 7 and look like non-faces in feature space.
+At 19×19, **alignment matters at the pixel level**, not just pose. CBCL crops are tightly cropped 19×19 native captures with eyes at row 8, nose at row 10, mouth at row 13. CelebA crops are 48×48 native with looser framing (more forehead, hair, neck); bilinearly downsized to 19×19, the same landmarks land at row 7 / 10 / 13. A 1-pixel shift on a 19-pixel face is ~5 % of the face, Haar features tile rectangle sums at fixed grid positions, so the feature distribution moves entirely. The cascade learned "eyes at row 8"; CelebA test faces have eyes at row 7 and look like non-faces in feature space.
 
 **Fix**: either move to 24×24 (5 px slack ≈ 20 % of the face, enough that bilinear CelebA still hits the same Haar grid as CBCL), or pre-align CelebA at the dataset level so its landmarks match CBCL's positions before downsampling (the `celeba_aligned` HF split). Adding `--jitter 1` or `--jitter 2` further trains the cascade to be mildly translation-invariant.
 
 ### 4. Multi-source positives
 
-CBCL ships only 1 929 unique faces in the HF train split. After augment+jitter that's ~7 700 train positives. Enough for an 11-stage cascade at 19×19, but limited by source diversity — the cascade overfits to CBCL's specific lighting and cropping style.
+CBCL ships only 1 929 unique faces in the HF train split. After augment+jitter that's ~7 700 train positives. Enough for an 11-stage cascade at 19×19, but limited by source diversity, the cascade overfits to CBCL's specific lighting and cropping style.
 
-**Fix** (`--face-source celeba_aligned+cbcl`): combine sources. With aligned CelebA, the alignment problem of § 3 is gone; we can mix freely. The multi-source run buys ~5 pp precision in raw scores (better hard-neg rejection) but only ~0.5 pp F1 after tuning, at 3.3× the compute cost — see [RESULTS.md](RESULTS.md#cbcl-vs-mixed-comparison). Worth it at 24×24, marginal at 19×19.
+**Fix** (`--face-source celeba_aligned+cbcl`): combine sources. With aligned CelebA, the alignment problem of § 3 is gone; we can mix freely. The multi-source run buys ~5 pp precision in raw scores (better hard-neg rejection) but only ~0.5 pp F1 after tuning, at 3.3× the compute cost, see [RESULTS.md](RESULTS.md#cbcl-vs-mixed-comparison). Worth it at 24×24, marginal at 19×19.
 
 ### 5. Calibration was hitting its own ceiling
 
-[adaboost.py](adaboost.py) `_calibrated_threshold()` historically capped per-stage threshold at `0.5` ("never tighten past majority vote"). At 24×24 with a deep cascade, val-pos scores cluster much higher than 0.5 — calibration wanted to push deep stages to 0.6+ to match the val distribution and got clamped instead. The cap was leaving FPR points on the table.
+[adaboost.py](adaboost.py) `_calibrated_threshold()` historically capped per-stage threshold at `0.5` ("never tighten past majority vote"). At 24×24 with a deep cascade, val-pos scores cluster much higher than 0.5, calibration wanted to push deep stages to 0.6+ to match the val distribution and got clamped instead. The cap was leaving FPR points on the table.
 
-That's also why post-hoc threshold tuning was so effective: the F1=0.357 cascade reached F1=0.653 just by allowing each stage's threshold to move past 0.5 to its actually-optimal point. No new training, no new features — just the cuts that calibration couldn't reach.
+That's also why post-hoc threshold tuning was so effective: the F1=0.357 cascade reached F1=0.653 just by allowing each stage's threshold to move past 0.5 to its actually-optimal point. No new training, no new features, just the cuts that calibration couldn't reach.
 
 **Fix**: raised the cap to 0.95 in [adaboost.py](adaboost.py); also added [tools/tune_thresholds.py](tools/tune_thresholds.py) as a cheap final-mile optimization (`--objective f1` for benchmark, `recall-at-spec` for "find every face" use cases).
 
 ### 6. Hybrid NMS for multi-scale duplicates
 
-Sliding-window detection at growth=1.25 fires the same face at adjacent scales. A 24×24 box and a 30×30 box around the same face have IoU ≈ 0.64 (fuses fine), but a 24×24 box inside a 48×48 box has IoU ≈ 0.25 — below the default 0.3 NMS threshold, so they don't fuse, producing "boxes on boxes" stacks.
+Sliding-window detection at growth=1.25 fires the same face at adjacent scales. A 24×24 box and a 30×30 box around the same face have IoU ≈ 0.64 (fuses fine), but a 24×24 box inside a 48×48 box has IoU ≈ 0.25, below the default 0.3 NMS threshold, so they don't fuse, producing "boxes on boxes" stacks.
 
 **Fix** ([utils.py](utils.py) `non_maximum_supression`, `--nms-metric hybrid`): fuse if **either** IoU > threshold **or** IoMin > 0.7, where IoMin = `intersection / min(area1, area2)`. IoMin is 1.0 for nested boxes regardless of scale ratio. The default `mode="weighted"` then merges the cluster into a single score-weighted-average box rather than dropping the smaller-scale detections.
 
-### 7. Adaptive cascade — calibrated FPR + recall
+### 7. Adaptive cascade: calibrated FPR + recall
 
 Getting the adaptive trainer right took three attempts:
 
-**Attempt 1 — FPR at threshold 0.5.** First version replaced `--layers` with a per-stage FPR target. The check measured FPR at threshold 0.5 (un-calibrated majority vote):
+**Attempt 1, FPR at threshold 0.5.** First version replaced `--layers` with a per-stage FPR target. The check measured FPR at threshold 0.5 (un-calibrated majority vote):
 
 ```python
 fpr = (running_neg_scores / sum_alpha_fpr >= 0.5).mean()
 if fpr <= target_stage_fpr: break
 ```
 
-But after each stage finishes, `calibrate()` lowers the deployed threshold to ~0.15-0.20 to keep `--layer-recall` of faces. **The FPR metric was at the wrong threshold.** Symptom: every stage stopped at round 1 — the first stump alone achieves FPR=0.15 ≤ 0.5 at threshold 0.5, so AdaBoost halted. At the actual deployed threshold the stage's recall was only 80 % and FPR was much higher. The cumulative val-recall check killed the cascade after one stage.
+But after each stage finishes, `calibrate()` lowers the deployed threshold to ~0.15-0.20 to keep `--layer-recall` of faces. **The FPR metric was at the wrong threshold.** Symptom: every stage stopped at round 1, the first stump alone achieves FPR=0.15 ≤ 0.5 at threshold 0.5, so AdaBoost halted. At the actual deployed threshold the stage's recall was only 80 % and FPR was much higher. The cumulative val-recall check killed the cascade after one stage.
 
-**Attempt 2 — `--min-wcs-per-stage` floor.** Workaround: don't let the FPR early-stop fire until at least N weak classifiers are in. Hid the symptom — every stage stopped exactly at the floor — but the metric was still measured at the wrong threshold, and post-stage calibration was driving the threshold to the 0.95 cap because with so few WCs the score is too coarse to meet `target_recall`. Cascade depth was governed by a magic number.
+**Attempt 2, `--min-wcs-per-stage` floor.** Workaround: don't let the FPR early-stop fire until at least N weak classifiers are in. Hid the symptom (every stage stopped exactly at the floor) but the metric was still measured at the wrong threshold, and post-stage calibration was driving the threshold to the 0.95 cap because with so few WCs the score is too coarse to meet `target_recall`. Cascade depth was governed by a magic number.
 
-**Attempt 3 (current) — calibrated-threshold FPR + recall, both checked.**
+**Attempt 3 (current), calibrated-threshold FPR + recall, both checked.**
 
 1. Apply the just-chosen weak classifier to val_pos (features pre-computed and cached in `_cache/xf_val.npy`).
 2. Recalibrate `self.threshold` so `target_recall` of val_pos passes.
 3. Measure FPR on the stage's training negatives **at that threshold**.
-4. Early-stop only when `recall ≥ target_recall AND fpr ≤ target_fpr` simultaneously — V&J §3 verbatim.
+4. Early-stop only when `recall ≥ target_recall AND fpr ≤ target_fpr` simultaneously, V&J §3 verbatim.
 
-The two-condition check matters because intra-stage there's a transient where the threshold is still settling: with 1-2 WCs the score has only 2-3 distinct values, the threshold gets clamped at the `min(alphas)/sum(alphas)` floor (effectively 1.0 → capped to 0.95), and recall is artificially below target. The FPR at that clamped threshold looks small but is meaningless — recall isn't honored. Requiring recall ≥ target gates the early-stop until the threshold has actually settled.
+The two-condition check matters because intra-stage there's a transient where the threshold is still settling: with 1-2 WCs the score has only 2-3 distinct values, the threshold gets clamped at the `min(alphas)/sum(alphas)` floor (effectively 1.0 → capped to 0.95), and recall is artificially below target. The FPR at that clamped threshold looks small but is meaningless, recall isn't honored. Requiring recall ≥ target gates the early-stop until the threshold has actually settled.
 
 `--min-wcs-per-stage` survives as an inert safeguard (default 1).
 
-**Lesson:** when introducing a "stop when metric X is good enough" rule, verify that X is measured at the same operating point as deployment. A metric at the wrong threshold is worse than no metric — it gives confident misleading numbers.
+**Lesson:** when introducing a "stop when metric X is good enough" rule, verify that X is measured at the same operating point as deployment. A metric at the wrong threshold is worse than no metric, it gives confident misleading numbers.
 
 ---
 
@@ -103,13 +103,13 @@ The two-condition check matters because intra-stage there's a transient where th
 
 ### B2. Stale feature cache after data source change
 
-`data/<res>_<src>/_cache/xf_pos.npy` is written after the first training run and memmapped on reuse. If `train_pos` changes (different source, resolution, or sample count) but the cache exists, the old features are silently reused — producing a mismatch between feature-matrix dimensions and current `train_pos.shape`.
+`data/<res>_<src>/_cache/xf_pos.npy` is written after the first training run and memmapped on reuse. If `train_pos` changes (different source, resolution, or sample count) but the cache exists, the old features are silently reused, producing a mismatch between feature-matrix dimensions and current `train_pos.shape`.
 
 **Fix (workaround):** always `rm -rf data/<res>_<src>/_cache` before retraining with different data. The cache is safe to reuse only when the exact same `prepare_data.py` command was run.
 
 ### B3. Jitter leakage across train/val split
 
-Original multi-source implementation called `jitter_crops()` on the full face array then `split_three_way()`. The same underlying face could end up in train (center crop) AND val (jittered crop) — breaking the independence assumption for calibration.
+Original multi-source implementation called `jitter_crops()` on the full face array then `split_three_way()`. The same underlying face could end up in train (center crop) AND val (jittered crop), breaking the independence assumption for calibration.
 
 **Fix:** call `split_three_way()` on `faces_unique` (pre-jitter unique face indices), then apply `jitter_crops()` per split separately.
 
@@ -117,11 +117,11 @@ Original multi-source implementation called `jitter_crops()` on the full face ar
 
 Old code used `intersection / smaller-area` as the overlap metric, but the "smaller area" comparison was order-dependent (which box was `idx` vs `remaining` varied with iteration order). A 24×24 box inside a 48×48 box gave different merge decisions depending on which box was processed first.
 
-**Fix:** `metric='hybrid'` (default): fuse if `IoU > threshold OR IoM > 0.7`, where `IoM = intersection / min(area1, area2)`. Symmetric, and catches nested boxes that plain IoU misses. (Same fix as § 6 above — kept as a bug entry for the symmetry issue too.)
+**Fix:** `metric='hybrid'` (default): fuse if `IoU > threshold OR IoM > 0.7`, where `IoM = intersection / min(area1, area2)`. Symmetric, and catches nested boxes that plain IoU misses. (Same fix as § 6 above, kept as a bug entry for the symmetry issue too.)
 
 ### B5. `build_caltech_pool` capped at `n_imgs × patches_per_image`
 
-`--pool-size 50000000` printed "filled 1 195 160 / 50 000 000" and stopped silently. The original `build_caltech_pool` did a single pass over the Caltech image set, extracting at most `patches_per_image=40` random crops per image. With 29 879 Caltech images that's a hard ceiling of ~1.2 M patches — `--pool-size` was effectively a no-op above that.
+`--pool-size 50000000` printed "filled 1 195 160 / 50 000 000" and stopped silently. The original `build_caltech_pool` did a single pass over the Caltech image set, extracting at most `patches_per_image=40` random crops per image. With 29 879 Caltech images that's a hard ceiling of ~1.2 M patches, `--pool-size` was effectively a no-op above that.
 
 **Fix:** multi-pass loop. Each pass re-permutes the image order and draws fresh random offsets, so duplicates across passes are negligible (a 300×300 image has ~80 K possible 19×19 positions).
 
@@ -133,7 +133,7 @@ The original anchor-set fix had a scope bug: `if 'cbcl' in face_sources:`. A sin
 
 **Fix:** drop the guard. Generate `val_cbcl_pos` whenever the benchmark is CBCL, regardless of which faces train sees. (Later subsumed by the architecture cleanup below.)
 
-**Lesson:** calibration anchor is a property of *the benchmark*, not of the training source. Coupling the two via a "happens to be there" implementation quirk created the false security of "the fix is applied — manifest just says 0, must be an edge case".
+**Lesson:** calibration anchor is a property of *the benchmark*, not of the training source. Coupling the two via a "happens to be there" implementation quirk created the false security of "the fix is applied, manifest just says 0, must be an edge case".
 
 ### B7. Cumulative val-recall checked on `val_pos`, not the calibration set
 
@@ -152,7 +152,7 @@ Stage 4: 0.890 ← below --min-cascade-recall 0.90, stops
 
 ### B8. `_mine_from_pool` random memmap access thrashes on >RAM pools
 
-When `caltech_pool.npy` exceeds RAM (50 M patches at 19×19 = ~18 GB, machine has 16 GB), the original random-index sampling triggered a page fault per access — each ~4 KB OS page holds ~11 contiguous patches but the random index only uses 1 of them. Page cache thrashed, swap filled, throughput dropped from ~30 K patches/s to ~8 K patches/s.
+When `caltech_pool.npy` exceeds RAM (50 M patches at 19×19 = ~18 GB, machine has 16 GB), the original random-index sampling triggered a page fault per access, each ~4 KB OS page holds ~11 contiguous patches but the random index only uses 1 of them. Page cache thrashed, swap filled, throughput dropped from ~30 K patches/s to ~8 K patches/s.
 
 **Fix:** chunked sequential traversal. Random order over chunks of 50 K patches (~18 MB each), sequential within a chunk. OS prefetch loves sequential reads on memmap. Random chunk order preserves unbiasedness.
 
@@ -170,7 +170,7 @@ set -euo pipefail
 stale=$(ls weights/19/cvj_weights_*.pkl 2>/dev/null | wc -l | tr -d ' ')
 ```
 
-When the glob has no matches, `ls` exits with code 1. `2>/dev/null` only redirects stderr — it doesn't change the exit code. `pipefail` propagates the non-zero exit through the pipeline. `set -e` then kills the script. All before any `echo`.
+When the glob has no matches, `ls` exits with code 1. `2>/dev/null` only redirects stderr, it doesn't change the exit code. `pipefail` propagates the non-zero exit through the pipeline. `set -e` then kills the script. All before any `echo`.
 
 **Fix:** `shopt -s nullglob` + bash array. Empty globs expand to empty arrays instead of the literal pattern, no `ls` invocation, no pipefail trap.
 
@@ -186,9 +186,9 @@ The codebase had accumulated three coupled concepts that confused everyone: `val
 | ------------------------------------- | -------------------------------------------------- |
 | `cbcl_test_pos.npy`, `cbcl_test_neg.npy` | `test_pos.npy`, `test_neg.npy`                  |
 | `cbcl_neg_seed.npy`                   | `neg_seed.npy`                                     |
-| `val_cbcl_pos.npy` (partial)          | (dropped — merged into `val_pos`)                  |
+| `val_cbcl_pos.npy` (partial)          | (dropped, merged into `val_pos`)                  |
 | `val_pos` augmented (968 samples)     | `val_pos` raw, 500 samples, anchored to benchmark  |
-| `test_pos.npy` (10 % slice, unused)   | (no internal test split — benchmark IS the test)   |
+| `test_pos.npy` (10 % slice, unused)   | (no internal test split, benchmark IS the test)   |
 | `--train-frac 0.8 --val-frac 0.1`     | `--benchmark cbcl --val-size 500`                  |
 | `--neg-source caltech\|cbcl\|mixed`   | `--neg-source caltech\|benchmark\|mixed`           |
 | `seed_neg_pool`, `val_cal_pos` params | `neg_seed` (single param, single purpose)          |
@@ -205,10 +205,10 @@ test_pos/neg : from --benchmark test split (untouched)
 
 Key benefits:
 
-1. No wasted training data — the old 10 % test slice was generated and saved but never read; `main.py test` always used the separate HF test split.
-2. No leakage when face-source includes the benchmark — val indices are reserved before training samples are drawn, then excluded from the training pool.
-3. One val concept, used consistently — per-stage threshold tuning and the stop criterion measure the same distribution at the same operating point.
-4. Benchmark is a flag, not a hardcoded path — adding FDDB or WIDER FACE later needs ingestion at the HF dataset level only.
+1. No wasted training data, the old 10 % test slice was generated and saved but never read; `main.py test` always used the separate HF test split.
+2. No leakage when face-source includes the benchmark, val indices are reserved before training samples are drawn, then excluded from the training pool.
+3. One val concept, used consistently, per-stage threshold tuning and the stop criterion measure the same distribution at the same operating point.
+4. Benchmark is a flag, not a hardcoded path, adding FDDB or WIDER FACE later needs ingestion at the HF dataset level only.
 
 ---
 
@@ -216,7 +216,7 @@ Key benefits:
 
 Added [tools/mine_hard_negatives.py](tools/mine_hard_negatives.py) to pre-mine hard negatives from a trained cascade, save them to `weights/<res>/<weights-stem>__hardneg.npy`, and feed them into a subsequent training run via `main.py train --hard-neg-pool <path>`.
 
-**Standalone tool, not integrated into prepare_data.** A hard-neg pool is a model-derived artifact — it changes every time the cascade that mined it changes. `prepare_data.py` outputs are meant to be deterministic from raw HF data + flags. Coupling the two would force a full data re-bundle every time the reference model changes (~30 min wasted per iteration). The standalone tool also puts model lineage in the filename (`cvj_weights_1778801054__hardneg.npy`) — you can tell which cascade produced a given hard-neg pool just by looking at it.
+**Standalone tool, not integrated into prepare_data.** A hard-neg pool is a model-derived artifact, it changes every time the cascade that mined it changes. `prepare_data.py` outputs are meant to be deterministic from raw HF data + flags. Coupling the two would force a full data re-bundle every time the reference model changes (~30 min wasted per iteration). The standalone tool also puts model lineage in the filename (`cvj_weights_1778801054__hardneg.npy`), you can tell which cascade produced a given hard-neg pool just by looking at it.
 
 **Single-pass design.** Mining iterates `caltech_pool.npy` once, classifies every patch, keeps the ones the cascade misclassifies as faces. Budget = pool size. If the output is smaller than wanted, the fix is to regenerate `caltech_pool.npy` with `--pool-size` 5–10× bigger, *not* to crank a budget knob. `classify(patch)` is deterministic so re-sampling buys nothing.
 
@@ -231,42 +231,42 @@ Empirical observation comparing three runs at 19×19 (CBCL benchmark, 5 K target
 | A              |   0    | 4, 5, 9, 26, 31, 25, 35, 65, 68, 123, 156, 150, 188       |
 | B (CBCL@19, jitter=2) | 2 | 8, 7, 47, 326, **500** (cap), 500, 500, 500, ...     |
 
-Run A converged cleanly for 13 stages at `FPR ≤ 0.5` each. Run B hit a cliff at stage 5 — every subsequent stage saturated at the max-WC cap without satisfying the FPR target.
+Run A converged cleanly for 13 stages at `FPR ≤ 0.5` each. Run B hit a cliff at stage 5, every subsequent stage saturated at the max-WC cap without satisfying the FPR target.
 
-**Diagnosis.** At 19×19 there are 17 268 distinct Haar features. With `--jitter 2` the trained weak classifiers must be tolerant to ±2 px shift (each positive appears as both center crop AND a random shifted variant). To accommodate the shifted variant's lower native scores, each WC's threshold has to "open up" — which lets through hard-negs that look like slightly-shifted faces. By stage 5 the hard-negs from mining are face-like enough that no Haar feature can simultaneously (a) tolerate ±2 px shift on positives AND (b) reject these negatives. The cascade hits an information ceiling.
+**Diagnosis.** At 19×19 there are 17 268 distinct Haar features. With `--jitter 2` the trained weak classifiers must be tolerant to ±2 px shift (each positive appears as both center crop AND a random shifted variant). To accommodate the shifted variant's lower native scores, each WC's threshold has to "open up", which lets through hard-negs that look like slightly-shifted faces. By stage 5 the hard-negs from mining are face-like enough that no Haar feature can simultaneously (a) tolerate ±2 px shift on positives AND (b) reject these negatives. The cascade hits an information ceiling.
 
 **Practical bound at 19×19:**
 
 - `jitter=0`: cascade converges to 12–15 stages; brittle to inference-time misalignment (sliding window step=2 misses faces that land off-grid).
-- `jitter=1`: midpoint — ~11 stages converging, partial alignment robustness.
+- `jitter=1`: midpoint: ~11 stages converging, partial alignment robustness.
 - `jitter=2`: cascade saturates after stage 4 at 19×19; not viable.
 
 **24×24 should change this.** 78 K features (vs 17 K) gives roughly 4× more discriminative variety; the shift-tolerance vs hard-neg-rejection trade-off should fit within the model's capacity.
 
-**Lesson:** augmentation interacts with model capacity. At small resolutions the Haar feature space is the bottleneck — adding training diversity (jitter, augment) can exceed the model's ability to represent the resulting decision boundary. The symptom is "stages cap without converging" rather than "model overfits" — a different failure mode that doesn't show up in cross-validation because the cascade structure itself degrades.
+**Lesson:** augmentation interacts with model capacity. At small resolutions the Haar feature space is the bottleneck, adding training diversity (jitter, augment) can exceed the model's ability to represent the resulting decision boundary. The symptom is "stages cap without converging" rather than "model overfits", a different failure mode that doesn't show up in cross-validation because the cascade structure itself degrades.
 
-### v2 extension — where the ceiling actually sits
+### v2 extension: where the ceiling actually sits
 
 The pending experiment listed in RESULTS.md ("19×19 CBCL extended stages") was run by resuming each v1 baseline from its capped final stage with `--max-wcs-per-stage 800 --target-stage-fpr 0.65` (everything else identical to v1). Two distinct regimes appeared:
 
-- **Multi-source runs (CBCL, mixed)** *did* extend cleanly. CBCL went 11 → 15 stages, mixed went 11 → 16. Each new stage early-stopped at FPR ≈ 0.63–0.65 (just below the relaxed target) using 344–778 weak classifiers per stage — roughly 5× more than the equivalent depth in v1, but still finite. Tuned F1 lifted +2.2 to +2.4 pp on both runs (0.634 → 0.658 cbcl; 0.639 → 0.661 mixed), now ahead of the historical 24×24 best.
-- **CelebA-aligned-only stayed broken.** v1 capped at stage 3 (FPR=0.598). v2 reached stage 6 but every added stage saturated against the WC cap progressively earlier — stage 6 trained the full 800 WCs and *still* couldn't get FPR below 0.713. The capacity-ceiling break fired again. No amount of `target_stage_fpr` slack rescues a run where the feature space cannot separate the matched-domain hard negatives from the (unanchored, ±1 px jittered) CelebA positives in the first place.
+- **Multi-source runs (CBCL, mixed)** *did* extend cleanly. CBCL went 11 → 15 stages, mixed went 11 → 16. Each new stage early-stopped at FPR ≈ 0.63–0.65 (just below the relaxed target) using 344–778 weak classifiers per stage: roughly 5× more than the equivalent depth in v1, but still finite. Tuned F1 lifted +2.2 to +2.4 pp on both runs (0.634 → 0.658 cbcl; 0.639 → 0.661 mixed), now ahead of the historical 24×24 best.
+- **CelebA-aligned-only stayed broken.** v1 capped at stage 3 (FPR=0.598). v2 reached stage 6 but every added stage saturated against the WC cap progressively earlier: stage 6 trained the full 800 WCs and *still* couldn't get FPR below 0.713. The capacity-ceiling break fired again. No amount of `target_stage_fpr` slack rescues a run where the feature space cannot separate the matched-domain hard negatives from the (unanchored, ±1 px jittered) CelebA positives in the first place.
 
-**What the v2 extension actually demonstrated.** The 19×19 ceiling is not a single number — it's a curve. With *matched-domain anchored* positives (CBCL alone or mixed), the cascade can keep adding stages past FPR=0.5 if you raise the cap; each new stage just costs more weak classifiers (~400-800 vs ~150-400 at v1 depth). Beyond that the diminishing return is real: stages 12–16 cost ~25 h of wall time across both runs combined for +2 pp F1. Without anchored positives, the cascade hits the *real* ceiling at stage ~3–6 regardless of how much WC budget you allow — the feature space genuinely cannot represent the decision boundary.
+**What the v2 extension actually demonstrated.** The 19×19 ceiling is not a single number, it's a curve. With *matched-domain anchored* positives (CBCL alone or mixed), the cascade can keep adding stages past FPR=0.5 if you raise the cap; each new stage just costs more weak classifiers (~400-800 vs ~150-400 at v1 depth). Beyond that the diminishing return is real: stages 12–16 cost ~25 h of wall time across both runs combined for +2 pp F1. Without anchored positives, the cascade hits the *real* ceiling at stage ~3–6 regardless of how much WC budget you allow, the feature space genuinely cannot represent the decision boundary.
 
 **Practical takeaway:** if a stage caps with `final_fpr > 0.5`, check whether the run has CBCL-style anchored positives before extending. A v1 → v2 resume buys you +2 pp F1 on the well-anchored configurations; on the CelebA-only configuration it just postpones the same failure to a deeper stage.
 
-### v3 filtered — does positive curation rescue the CelebA ceiling? (no.)
+### v3 filtered: does positive curation rescue the CelebA ceiling? (no.)
 
 The natural follow-up to v2: if CelebA-only saturates because the *aligned* dataset still carries residual misaligned crops, then dropping the worst crops should free the cascade. Built the curation pipeline ([WORKFLOW.md](WORKFLOW.md) §4): score every CelebA-aligned positive with a frozen `cbcl__19_v2` oracle (cumulative AdaBoost margin), drop the bottom 61% (matches CBCL's positive count: ~7700 augmented entries = ~2000 unique faces, vs CBCL's 1929 unique). Pre-mine a 15K very-hard-neg reservoir from the same oracle via the streaming raw miner (`tools/mine_hard_negatives_raw.py`, 326M patches sampled at 0.0046% FPR) to top up late-stage mining shortfalls. Train with identical hyperparameters to cbcl v1.
 
-**Result:** still capped at stage 3, with FPR=0.622 at the same 400-WC budget as cbcl v1's stage 11 (which converged at FPR ≈ 0.47). Tuned F1=0.603 vs cbcl v1's 0.634 — close enough to call "paridad" at the operating-point level, but only because the F1 tuner does heroic work over the 3 trained stages: thresholds collapse to `[0.30, 0.44, 0.52]` and recall is sacrificed (0.917 → 0.504) for precision (0.056 → 0.751). cbcl v1 reaches its 0.634 with 11 stages of natural rejection power; CelebA filtered v3 reaches 0.603 by squeezing every drop out of 3 stages plus tuning. **The very-hard reservoir was never tapped** — training stopped before mining became hard enough to trigger a shortfall.
+**Result:** still capped at stage 3, with FPR=0.622 at the same 400-WC budget as cbcl v1's stage 11 (which converged at FPR ≈ 0.47). Tuned F1=0.603 vs cbcl v1's 0.634, close enough to call "paridad" at the operating-point level, but only because the F1 tuner does heroic work over the 3 trained stages: thresholds collapse to `[0.30, 0.44, 0.52]` and recall is sacrificed (0.917 → 0.504) for precision (0.056 → 0.751). cbcl v1 reaches its 0.634 with 11 stages of natural rejection power; CelebA filtered v3 reaches 0.603 by squeezing every drop out of 3 stages plus tuning. **The very-hard reservoir was never tapped**, training stopped before mining became hard enough to trigger a shortfall.
 
 **What v3 actually proves.** Curation is not the missing piece. The structural delta is the feature space, not the data quality. Visual inspection of the `score_samples.png` grid (the bottom 30% of CelebA-aligned scores cluster on visibly off-axis crops) had suggested filtering would close the gap. It didn't, because *even the cleanest 2000 unique CelebA faces* exceed what 17K Haar features can discriminate against face-like hard negatives while tolerating ±1 px jitter. The capacity ceiling is the resolution, not the dataset.
 
-**Two side effects worth keeping.** First, the curation infrastructure works: F1 went from 0.542 (v1 unfiltered) → 0.603 (v3 filtered) — a real +6 pp lift that confirms the tooling produces a measurable improvement, just not enough to break the ceiling. Second, the streaming raw miner (`tools/mine_hard_negatives_raw.py`) is materially better than the pre-built-pool version for late-stage cascades: 15K very-hard patches at 0.0046% FPR is a usable reservoir, where the legacy pool-based miner against the same `cbcl__19_v2` would have yielded ~5K from a finite 50M pool. Both tools transfer cleanly to 24×24.
+**Two side effects worth keeping.** First, the curation infrastructure works: F1 went from 0.542 (v1 unfiltered) → 0.603 (v3 filtered), a real +6 pp lift that confirms the tooling produces a measurable improvement, just not enough to break the ceiling. Second, the streaming raw miner (`tools/mine_hard_negatives_raw.py`) is materially better than the pre-built-pool version for late-stage cascades: 15K very-hard patches at 0.0046% FPR is a usable reservoir, where the legacy pool-based miner against the same `cbcl__19_v2` would have yielded ~5K from a finite 50M pool. Both tools transfer cleanly to 24×24.
 
-**Lesson:** when a capacity-bound configuration shows reasonable per-stage early-stops in the first 1-2 stages, curating the positives can buy a small lift to the trained operating point — but the post-tuning F1 ceiling is set by the cascade *depth*, which the feature space caps. If the cascade saturates at stage 3 with FPR ≈ 0.6, curation alone won't get it to stage 12. The fix is upstream: more features (24×24), not better positives.
+**Lesson:** when a capacity-bound configuration shows reasonable per-stage early-stops in the first 1-2 stages, curating the positives can buy a small lift to the trained operating point, but the post-tuning F1 ceiling is set by the cascade *depth*, which the feature space caps. If the cascade saturates at stage 3 with FPR ≈ 0.6, curation alone won't get it to stage 12. The fix is upstream: more features (24×24), not better positives.
 
 ---
 
@@ -274,17 +274,17 @@ The natural follow-up to v2: if CelebA-only saturates because the *aligned* data
 
 The 19×19 work converged on a single prediction: move to 24×24 (~60K features vs ~17K) and CelebA-only should stop saturating. The `celeba_aligned__24_v1` run (10K unique CelebA faces, jitter=1 + augment = 39.2K positives after a 2% oracle-score drop, 10K negs/stage, `--target-stage-fpr 0.5`) tested it directly.
 
-**The ceiling did move up — from 3 stages (19×19) to 9 stages (24×24).** That's the headline: at 24×24 the same dataset that collapsed at stage 3 trains a 9-stage cascade with naturally early-stopping stages (30, 36, 25, 45, 47, 336, 95, 457 WCs) before stage 9 finally hit the 800-WC cap with FPR=0.653 > 0.5. The feature budget genuinely absorbs CelebA's variety where 19×19 couldn't. CelebA at 24×24 is a viable face source — the central hypothesis of the whole 19×19 arc, confirmed.
+**The ceiling did move up, from 3 stages (19×19) to 9 stages (24×24).** That's the headline: at 24×24 the same dataset that collapsed at stage 3 trains a 9-stage cascade with naturally early-stopping stages (30, 36, 25, 45, 47, 336, 95, 457 WCs) before stage 9 finally hit the 800-WC cap with FPR=0.653 > 0.5. The feature budget genuinely absorbs CelebA's variety where 19×19 couldn't. CelebA at 24×24 is a viable face source, the central hypothesis of the whole 19×19 arc, confirmed.
 
 **But three hard realities showed up:**
 
-1. **Late-stage cost explodes.** Per-stage wall time was not linear in WC count — it ballooned with depth as each `_best_stump` call sorts a wider hard-neg margin. Stage 6 (336 WCs) took 26 h; stage 8 (457 WCs) took 35 h; stage 9 (800 WCs) took **71 h**. Total run: **156 h** (~6.5 days). My pre-run estimate of 50-90 h was wrong by ~2× — WC-count extrapolation from the smoke test does not hold once stages get deep, because cost scales with `WCs × samples × log(samples)` and the deep stages need many more WCs.
+1. **Late-stage cost explodes.** Per-stage wall time was not linear in WC count, it ballooned with depth as each `_best_stump` call sorts a wider hard-neg margin. Stage 6 (336 WCs) took 26 h; stage 8 (457 WCs) took 35 h; stage 9 (800 WCs) took **71 h**. Total run: **156 h** (~6.5 days). My pre-run estimate of 50-90 h was wrong by ~2×, WC-count extrapolation from the smoke test does not hold once stages get deep, because cost scales with `WCs × samples × log(samples)` and the deep stages need many more WCs.
 
 2. **Weak-classifier count per stage is NOT monotonic, and that's expected.** The progression 30→36→25→45→47→336→95→457→800 looks erratic. It isn't a bug: each stage trains against a *freshly mined* hard-neg set whose exact geometry in Haar-feature space is stochastic, and the seed/Caltech mix ratio shifts with depth (the fixed 9096-patch CBCL seed depletes faster than the effectively-infinite Caltech pool, so later stages see proportionally fewer face-like seed negatives). A stage whose negs happen to land in a region the accumulated earlier WCs already cover finishes in 25-95 WCs; one that hits an unexplored corner needs 336-800. The global trend is monotonic (early mean ~40 WCs, late mean ~400) but stage-to-stage is noisy. The original paper hid this with a hand-fixed `--layers` schedule; the adaptive trainer surfaces the real cost.
 
-3. **`extend_stage.py` does not rescue a saturated stage — extending it is a wash.** A custom tool was built to extend stage 9 from 800 → 1200 WCs in place (truncate to 8 stages, re-mine the same hard-neg difficulty, replay the 800 saved rounds to reconstruct AdaBoost state deterministically, then continue to round 1200). It ran 31 h for **no net gain**: stage-9 FPR *degraded* 0.653 (800 WCs) → 0.751 (1200 WCs), benchmark F1 (raw) dropped 0.521 → 0.510, and after F1 tuning the two are statistically tied (0.6286 v1 vs 0.6298 ext1200 — a 0.1 pp difference, inside the noise). The mechanism is the same AdaBoost-saturation signature as the 19×19 v2 extension: the 400 new WCs carry alpha ≈ 0.09 (near-noise contributions), they compress the val-positive score range, and the recalibrated threshold rises (0.4717 → 0.4734) to preserve 99% recall — a higher threshold lets *more* negatives through. The tuner papers over the raw degradation by re-finding an operating point, which is why the tuned F1s converge — but the 31 h bought nothing the tuner couldn't already extract from the 800-WC version. **Adding weak classifiers to a stage already at its information ceiling raises FPR, it doesn't lower it.** Once `pos_p1 < neg_p99` (the hardest positives overlap the hardest negatives in score space, as the stage-9 diagnose shows: pos_p1=0.433 < neg_p99=0.491), no number of additional Haar stumps separates them.
+3. **`extend_stage.py` does not rescue a saturated stage, extending it is a wash.** A custom tool was built to extend stage 9 from 800 → 1200 WCs in place (truncate to 8 stages, re-mine the same hard-neg difficulty, replay the 800 saved rounds to reconstruct AdaBoost state deterministically, then continue to round 1200). It ran 31 h for **no net gain**: stage-9 FPR *degraded* 0.653 (800 WCs) → 0.751 (1200 WCs), benchmark F1 (raw) dropped 0.521 → 0.510, and after F1 tuning the two are statistically tied (0.6286 v1 vs 0.6298 ext1200, a 0.1 pp difference, inside the noise). The mechanism is the same AdaBoost-saturation signature as the 19×19 v2 extension: the 400 new WCs carry alpha ≈ 0.09 (near-noise contributions), they compress the val-positive score range, and the recalibrated threshold rises (0.4717 → 0.4734) to preserve 99% recall, a higher threshold lets *more* negatives through. The tuner papers over the raw degradation by re-finding an operating point, which is why the tuned F1s converge, but the 31 h bought nothing the tuner couldn't already extract from the 800-WC version. **Adding weak classifiers to a stage already at its information ceiling raises FPR, it doesn't lower it.** Once `pos_p1 < neg_p99` (the hardest positives overlap the hardest negatives in score space, as the stage-9 diagnose shows: pos_p1=0.433 < neg_p99=0.491), no number of additional Haar stumps separates them.
 
-**Practical takeaway for 24×24.** The model is near its achievable ceiling at 9 stages. The highest-ROI remaining action is post-hoc threshold tuning (free, ~1 min — it lifted this run from raw F1=0.521 to tuned 0.629, +11 pp), not more training. Truncate-and-resume to add stages costs 30-70 h *per stage* with only ~0.01 of cumulative-recall headroom left before the `min_cascade_recall` floor stops it — so realistically +1 stage for +1-3 pp F1. Threshold tuning gives the same precision/recall trade-off that "drop more positives and retrain" would, but for free and reversibly: the lever for "stricter model, higher precision" is the per-stage cut point, not the training-set composition. **CelebA-only at 24×24 tuned reaches F1=0.629 on the CBCL benchmark — ~3 pp below cbcl-on-cbcl (0.660), which is exactly the "no CBCL in training" penalty since the benchmark *is* CBCL. On real images the celeba-only model produces noticeably cleaner, more diverse detections** (8/9 faces on `people.png` with near-zero false positives), which is the actual goal — the benchmark gap is a measurement artifact of testing a general detector on one specific distribution.
+**Practical takeaway for 24×24.** The model is near its achievable ceiling at 9 stages. The highest-ROI remaining action is post-hoc threshold tuning (free, ~1 min, it lifted this run from raw F1=0.521 to tuned 0.629, +11 pp), not more training. Truncate-and-resume to add stages costs 30-70 h *per stage* with only ~0.01 of cumulative-recall headroom left before the `min_cascade_recall` floor stops it, so realistically +1 stage for +1-3 pp F1. Threshold tuning gives the same precision/recall trade-off that "drop more positives and retrain" would, but for free and reversibly: the lever for "stricter model, higher precision" is the per-stage cut point, not the training-set composition. **CelebA-only at 24×24 tuned reaches F1=0.629 on the CBCL benchmark, ~3 pp below cbcl-on-cbcl (0.660), which is exactly the "no CBCL in training" penalty since the benchmark *is* CBCL. On real images the celeba-only model produces noticeably cleaner, more diverse detections** (8/9 faces on `people.png` with near-zero false positives), which is the actual goal, the benchmark gap is a measurement artifact of testing a general detector on one specific distribution.
 
 ---
 
@@ -305,14 +305,14 @@ The 19×19 work converged on a single prediction: move to 24×24 (~60K features 
 | CelebA-only at 19×19 (raw, no alignment)        | Recall 0.017                                    | Pixel alignment mismatch with CBCL benchmark                     |
 | CelebA-only at 19×19 (aligned, jitter=2)        | Cascade caps at 3 stages, F1=0.113              | Variety exceeds Haar-feature capacity                            |
 | CelebA-only at 19×19 (aligned, filtered drop 0.61) | Still caps at 3 stages, tuned F1=0.603       | Curation lifts operating point +6 pp but doesn't break ceiling   |
-| **CelebA-only at 24×24 (aligned)**              | **9 natural stages (vs 3 at 19×19)**            | 60K features absorb CelebA's variety — ceiling moves up          |
+| **CelebA-only at 24×24 (aligned)**              | **9 natural stages (vs 3 at 19×19)**            | 60K features absorb CelebA's variety, ceiling moves up          |
 | Adding stages to a saturated cascade            | Makes recall worse                              | More rejection on already-broken positives = lower recall        |
 | Extending a saturated stage (`extend_stage.py`) | FPR 0.65 → 0.75, F1 raw 0.521 → 0.510 (worse)   | Near-noise WCs raise the recalibrated threshold → more negs pass  |
-| Deepening past stage 10 at 24×24 (v2)           | Stage rejection 31% → 30% → 16% → 6% per stage   | Exponential diminishing returns — surviving negs ≈ faces          |
+| Deepening past stage 10 at 24×24 (v2)           | Stage rejection 31% → 30% → 16% → 6% per stage   | Exponential diminishing returns, surviving negs ≈ faces          |
 | `--precompute-sort-index` (AdaBoost)            | ~5× faster rounds (≈280 s → ≈50 s)              | Caches per-feature argsort; reused every boosting round           |
 | H-flip augmentation                             | Marginal                                        | Symmetric Haar features partially already invariant to it        |
 | Positive curation (`--drop-low-score-pos`)      | +6 pp F1 on capacity-bound runs                 | Removes residual misaligned crops; doesn't fix the feature cap   |
-| Streaming raw very-hard mining                  | 15K hard negs at 0.0046% FPR (vs ~5K from pool) | No finite intermediate pool — scans HF raw until target reached  |
+| Streaming raw very-hard mining                  | 15K hard negs at 0.0046% FPR (vs ~5K from pool) | No finite intermediate pool, scans HF raw until target reached  |
 
 ---
 
@@ -322,4 +322,4 @@ The 19×19 work converged on a single prediction: move to 24×24 (~60K features 
 
 Adding 1–3 px Haar features would expand the feature set from ~60 K to ~500 K at 24×24.
 
-**Not worth it.** Tiny features are noise at this resolution — a 1×2 Haar on a 24×24 face doesn't encode meaningful structure. Training time scales linearly in feature count; 10× more features means 10× longer training per round. The original paper used `min_size=1` but their 24×24 window was 400-dpi film scans, not bilinearly downsampled 48×48 crops. Stick with `min_w=4, min_h=4`.
+**Not worth it.** Tiny features are noise at this resolution, a 1×2 Haar on a 24×24 face doesn't encode meaningful structure. Training time scales linearly in feature count; 10× more features means 10× longer training per round. The original paper used `min_size=1` but their 24×24 window was 400-dpi film scans, not bilinearly downsampled 48×48 crops. Stick with `min_w=4, min_h=4`.

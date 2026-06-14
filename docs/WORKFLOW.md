@@ -1,4 +1,4 @@
-# Viola-Jones — Real Workflow
+# Viola-Jones: Real Workflow
 
 Guía rápida del ciclo end-to-end que se usa realmente: preparar datos, entrenar una cascade base, iterar con curación (score + filtro + reservoir de hard-negs raw), evaluar, diagnosticar, ajustar y detectar. Lectura ~5 min, ejecución mínima ~30 min (cold start, recipe 19×19 rápida) o ~12-40 h (recipe iteración completa).
 
@@ -95,7 +95,7 @@ python tools/inspect_dataset.py --out-dir samples/19_celeba_aligned
 
 ## 2. Entrenar baseline (cold start)
 
-Sin oracle aún — primera cascade base sobre el dataset preparado. Es la que después usaremos como oracle para puntuar y minar.
+Sin oracle aún, primera cascade base sobre el dataset preparado. Es la que después usaremos como oracle para puntuar y minar.
 
 ```bash
 python main.py train \
@@ -109,7 +109,7 @@ python main.py train \
     --min-stage-negatives 1000
 ```
 
-Hiperparámetros explicados en [FINDINGS.md §Adaptive cascade](FINDINGS.md#7-adaptive-cascade--calibrated-fpr--recall). El checkpoint vivo (`weights/19/cvj_weights_<ts>.pkl`) se sobrescribe tras cada stage — si se interrumpe en hora 5/15 el archivo sigue siendo una cascade utilizable parcial.
+Hiperparámetros explicados en [FINDINGS.md §Adaptive cascade](FINDINGS.md#7-adaptive-cascade--calibrated-fpr--recall). El checkpoint vivo (`weights/19/cvj_weights_<ts>.pkl`) se sobrescribe tras cada stage, si se interrumpe en hora 5/15 el archivo sigue siendo una cascade utilizable parcial.
 
 Cuando termine, renombra a algo legible:
 
@@ -151,8 +151,8 @@ El tuned F1 es el que reportas. La diferencia raw↔tuned (~5-7 pp en 19×19) mi
 
 **Alternativas de objetivo del tuner:**
 
-- `--objective f1` — para benchmark / comparativas (default).
-- `--objective recall-at-spec --min-spec 0.97` — para "encontrar todas las caras posibles" con spec mínima dada (uso real de detección).
+- `--objective f1`: para benchmark / comparativas (default).
+- `--objective recall-at-spec --min-spec 0.97`: para "encontrar todas las caras posibles" con spec mínima dada (uso real de detección).
 
 ---
 
@@ -170,8 +170,8 @@ python tools/score_faces.py \
 ```
 
 Produce:
-- `data/19_celeba_aligned/face_scores.npy` — float32 por cara, suma de márgenes per-stage (no short-circuit).
-- `data/19_celeba_aligned/score_samples.png` — grid con 8 bandas de percentiles (p00-p05 worst, ..., p95-p100 best), borde verde si la cascade pasa la cara y rojo si la rechaza, score amarillo por cara.
+- `data/19_celeba_aligned/face_scores.npy`: float32 por cara, suma de márgenes per-stage (no short-circuit).
+- `data/19_celeba_aligned/score_samples.png`: grid con 8 bandas de percentiles (p00-p05 worst, ..., p95-p100 best), borde verde si la cascade pasa la cara y rojo si la rechaza, score amarillo por cara.
 
 Mira el PNG. Decide la fracción del bottom a descartar según lo que veas:
 - Si el bottom 10-20% son crops claramente no-canónicos (ojos descentrados, mucha frente o cuello, perfiles parciales) → drop 0.20.
@@ -179,7 +179,7 @@ Mira el PNG. Decide la fracción del bottom a descartar según lo que veas:
 - Si las primeras bandas son caras razonables → drop 0.10 o no filtres en absoluto.
 
 El output del comando imprime también:
-- `passed/rejected`: % exacto que la cascade acepta/rechaza con `classify()` (criterio determinista — distinto del signo del score).
+- `passed/rejected`: % exacto que la cascade acepta/rechaza con `classify()` (criterio determinista: distinto del signo del score).
 - Histograma de percentiles del score continuo (ranking signal).
 
 **4.2. Mining de very-hard negatives sobre raw HF** (~2-6h, depende de la fuerza del oracle):
@@ -193,7 +193,7 @@ python tools/mine_hard_negatives_raw.py \
     --out weights/19/cbcl__19_v1__vhardneg_raw.npy
 ```
 
-Streamea patches random desde `ds["negatives"]` (Caltech raw del HF dataset) hasta llegar a `--target` o agotar `--budget`. Sin pool intermedio en disco; multi-pass cuando es necesario. Si la salida es menor que el target no es problema — el trainer la usa como reservoir de top-up.
+Streamea patches random desde `ds["negatives"]` (Caltech raw del HF dataset) hasta llegar a `--target` o agotar `--budget`. Sin pool intermedio en disco; multi-pass cuando es necesario. Si la salida es menor que el target no es problema, el trainer la usa como reservoir de top-up.
 
 Diferencia clave vs el legacy [tools/mine_hard_negatives.py](tools/mine_hard_negatives.py): aquel mina del `caltech_pool.npy` finito (~50M patches); este streamea raw sin esa cota. Usa el nuevo cuando el cascade es fuerte y el pool finito no rinde.
 
@@ -221,7 +221,7 @@ Lo que cambia internamente:
 - `--drop-low-score-pos 0.20` descarta el bottom 20% de `train_pos` ordenado por `face_scores.npy`. Cache de features se rota a `xf_pos__drop0.20.npy` para no contaminar el cache full-set.
 - `--very-hard-neg-pool` carga el reservoir y lo usa **sólo** como top-up cuando seed + caltech mining se queda corto en una stage (típicamente stages 12+).
 
-Tras entrenar: renombrar, test, diagnose, tune, test del tuned — mismo ciclo del §3.
+Tras entrenar: renombrar, test, diagnose, tune, test del tuned, mismo ciclo del §3.
 
 ---
 
@@ -269,10 +269,10 @@ python main.py detect \
 **Recomendaciones por experiencia:**
 
 - **Usa el modelo raw para detección**, no el `_tuned.pkl`. El tuned está optimizado para F1 sobre patches del benchmark; en sliding-window con prior negativo abrumador, los thresholds relajados meten más FPs.
-- **`--nms-threshold 0.2`** + **`--nms-metric hybrid`** (default) — fusiona duplicados anidados (mismo rostro detectado a escalas 1×, 1.5×, 2×). Ver [FINDINGS.md §6](FINDINGS.md#6-hybrid-nms-for-multi-scale-duplicates).
-- **`--detect-min-face 30`** para retratos / caras grandes — elimina FPs pequeños de fondo. Para fotos de clase o multitudes, dejar None o bajar a 15.
-- **`--detect-scale 1.3`** — menos niveles de pirámide que el default 1.25, ~30% más rápido con pérdida marginal de recall.
-- **`--detect-min-score 0.1-0.5`** — descarta detections con cumulative margin bajo (probablemente FPs).
+- **`--nms-threshold 0.2`** + **`--nms-metric hybrid`** (default): fusiona duplicados anidados (mismo rostro detectado a escalas 1×, 1.5×, 2×). Ver [FINDINGS.md §6](FINDINGS.md#6-hybrid-nms-for-multi-scale-duplicates).
+- **`--detect-min-face 30`** para retratos / caras grandes: elimina FPs pequeños de fondo. Para fotos de clase o multitudes, dejar None o bajar a 15.
+- **`--detect-scale 1.3`**: menos niveles de pirámide que el default 1.25, ~30% más rápido con pérdida marginal de recall.
+- **`--detect-min-score 0.1-0.5`**: descarta detections con cumulative margin bajo (probablemente FPs).
 
 ---
 
@@ -282,7 +282,7 @@ python main.py detect \
 - **Stale `cvj_weights_*.pkl`**: scripts de extension (`scripts/run_19_extend.sh`) refusan arrancar si hay un `cvj_weights_*.pkl` en `weights/<res>/` sin renombrar. Limpia o renombra antes.
 - **`auto-pick` de pesos**: si omites `--weights-path` en test/detect, se usa el `.pkl` más reciente por mtime bajo `weights/`. Útil para iterar; peligroso si tienes varios runs paralelos.
 - **`--resume-from` valida resolución**: el checkpoint resume sólo si `clf.base_width == res` del data-dir; mismatch falla limpio.
-- **`min_stage_negatives 1000`**: si el mining devuelve menos, la cascade para con un mensaje claro. Es el síntoma típico de pool agotado en stages tardías — solución: pre-minar very-hard reservoir con [tools/mine_hard_negatives_raw.py](tools/mine_hard_negatives_raw.py) y pasar via `--very-hard-neg-pool`.
+- **`min_stage_negatives 1000`**: si el mining devuelve menos, la cascade para con un mensaje claro. Es el síntoma típico de pool agotado en stages tardías: solución: pre-minar very-hard reservoir con [tools/mine_hard_negatives_raw.py](tools/mine_hard_negatives_raw.py) y pasar via `--very-hard-neg-pool`.
 
 ---
 
