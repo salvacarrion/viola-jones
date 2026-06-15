@@ -70,18 +70,17 @@ Per-patch face / non-face classification on the CBCL benchmark (472 faces, 23 57
 
 ### In-the-wild detection (FDDB)
 
-Full-image detection on [FDDB](http://vis-www.cs.umass.edu/fddb/) fold 1 (290 images, 515 faces), IoU-matched against ground truth. This is the fair common ground with OpenCV, since both detectors slide over the same images. AP and recall are reported at IoU 0.5 and at the more lenient 0.3.
+Full-image detection on all 10 [FDDB](http://vis-www.cs.umass.edu/fddb/) folds (2845 images, 5171 faces), IoU-matched against ground truth. This is the fair common ground with OpenCV, since both detectors slide over the same images. AP and recall are reported at IoU 0.5 and at the more lenient 0.3.
 
 | Detector                                | AP@0.5 | R@0.5 | P@0.5 | AP@0.3 | R@0.3 |
 | :-------------------------------------- | :----: | :---: | :---: | :----: | :---: |
-| OpenCV `alt` (cv2)                      | 0.654  | 0.674 | 0.853 | 0.734  | 0.738 |
-| OpenCV `default` (cv2)                  | 0.665  | 0.689 | 0.683 | 0.733  | 0.750 |
-| OpenCV `default` (our native port)      | 0.599  | 0.639 | 0.573 | 0.719  | 0.736 |
-| Ours 24×24 CelebA v2 ⭐ (min-face 80)    | 0.010  | 0.089 | 0.095 | 0.298  | 0.408 |
-| Ours 24×24 CelebA v2 ⭐ (min-face 40)    | 0.001  | 0.033 | 0.005 | 0.073  | 0.272 |
-| Ours 19×19 CelebA+CBCL v2               | 0.000  | 0.016 | 0.002 | 0.002  | 0.091 |
+| OpenCV `alt` (cv2)                      | 0.678  | 0.694 | 0.876 | 0.738  | 0.741 |
+| OpenCV `default` (cv2)                  | 0.683  | 0.709 | 0.720 | 0.736  | 0.751 |
+| OpenCV `default` (our native port)      | 0.624  | 0.658 | 0.582 | 0.724  | 0.740 |
+| Ours 24×24 CelebA v2 ⭐ (min-face 80)    | 0.014  | 0.111 | 0.121 | 0.282  | 0.400 |
+| Ours 24×24 CelebA v2 ⭐ (min-face 40)    | 0.000  | 0.033 | 0.005 | 0.069  | 0.278 |
 
-**Each detector wins on the domain it was trained for.** On tight CBCL crops our best model reaches F1 0.661 while OpenCV scores 0.000 (its cascade needs a context margin the crops do not have). On in-the-wild FDDB the relationship flips: OpenCV, trained on news photos of the same kind, reaches AP 0.67, while our CelebA-aligned model trails. Two things hold our model back on FDDB: a false-positive flood from negatives that were never in-the-wild scenes, and a box convention tighter than FDDB's ellipse boxes. Raising `--detect-min-face` to 80 removes the small-scale false positives (FDDB has almost no tiny faces) and lifts AP@0.3 from 0.07 to 0.30.
+**Each detector wins on the domain it was trained for.** On tight CBCL crops our best model reaches F1 0.661 while OpenCV scores 0.000 (its cascade needs a context margin the crops do not have). On in-the-wild FDDB the relationship flips: OpenCV, trained on news photos of the same kind, reaches AP 0.68, while our CelebA-aligned model trails (the 19×19 models trail further still, AP@0.3 near 0). Two things hold our model back on FDDB: a false-positive flood from negatives that were never in-the-wild scenes, and a box convention tighter than FDDB's ellipse boxes. Raising `--detect-min-face` to 80 removes the small-scale false positives (FDDB has almost no tiny faces) and lifts AP@0.3 from 0.07 to 0.28.
 
 Our best model (red) vs OpenCV default (blue), ground truth in green:
 

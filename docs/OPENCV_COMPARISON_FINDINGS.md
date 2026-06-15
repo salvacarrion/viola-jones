@@ -9,7 +9,7 @@ The headline is **not** "OpenCV is better". It is: **each detector wins on the d
 | Benchmark | Domain | Ours (best) | OpenCV (default) |
 |---|---|---|---|
 | CBCL patches (`main.py test`) | tight, aligned face crops | **F1 0.661** | **F1 0.000** |
-| FDDB fold 1 (full images, IoU≥0.3) | in-the-wild scenes | AP 0.30 / recall 0.45 | **AP 0.73 / recall 0.75** |
+| FDDB, 10 folds (full images, IoU≥0.3) | in-the-wild scenes | AP 0.28 / recall 0.40 | **AP 0.74 / recall 0.75** |
 
 Our detector was trained on aligned, tightly-cropped CelebA/CBCL faces, so it dominates the tight-crop patch benchmark and OpenCV scores zero there. OpenCV's cascade was trained on in-the-wild news photos (the same source family as FDDB), so it dominates full-image in-the-wild detection. Neither benchmark alone is "the" comparison.
 
@@ -45,14 +45,26 @@ Recall climbs monotonically with context, but the CBCL crops do not carry the su
 
 ## Part 2: FDDB full-image benchmark (the comparable metric)
 
-FDDB (Face Detection Data Set and Benchmark, UMass) is the canonical Viola-Jones-era benchmark: 2845 images, 5171 faces, annotated as ellipses. Both detectors run in their native multi-scale mode on the same images; detections are matched to ground truth by IoU. Numbers below are **fold 1 (290 images, 515 faces)**.
+FDDB (Face Detection Data Set and Benchmark, UMass) is the canonical Viola-Jones-era benchmark: 2845 images, 5171 faces, annotated as ellipses. Both detectors run in their native multi-scale mode on the same images; detections are matched to ground truth by IoU. The headline below is on **all 10 folds (2845 images, 5171 faces)**; the per-model and sensitivity breakdowns that follow are on **fold 1 (290 images, 515 faces)**, which we verified tracks the 10-fold numbers closely (e.g. our best AP@0.3 is 0.298 on fold 1 vs 0.282 on all folds).
 
 Protocol / honest caveats:
 - GT ellipses are converted to their axis-aligned bounding boxes. FDDB ellipses include forehead+chin, so they run a bit taller than a typical detector box: IoU≥0.5 against the bbox is a standard but slightly strict simplification. We report both IoU≥0.3 and IoU≥0.5.
 - OpenCV detections come from `detectMultiScale3` (confidence = stage `levelWeight`), `scaleFactor=1.1`, `minNeighbors=2`.
 - Different training data is *the point* of a baseline, not a flaw: both detectors are scored identically on the same images.
 
-### Our models (min-face=40, the detector default)
+### Headline (all 10 folds)
+
+| Detector | AP@0.3 | R@0.3 | P@0.3 | AP@0.5 | R@0.5 | P@0.5 |
+|---|---|---|---|---|---|---|
+| OpenCV `alt` (cv2) | 0.738 | 0.741 | 0.934 | 0.678 | 0.694 | 0.876 |
+| OpenCV `default` (cv2) | 0.736 | 0.751 | 0.763 | 0.683 | 0.709 | 0.720 |
+| OpenCV `default` (our native port) | 0.724 | 0.740 | 0.655 | 0.624 | 0.658 | 0.582 |
+| **ours v2_s11_tuned (min-face 80)** | 0.282 | 0.400 | 0.439 | 0.014 | 0.111 | 0.121 |
+| ours v2_s11_tuned (min-face 40) | 0.069 | 0.278 | 0.045 | 0.000 | 0.033 | 0.005 |
+
+FDDB-ROC at scale: OpenCV `default` reaches recall 0.62 at 100 total false positives across all 2845 images and 0.74 at 1000; our best stays at 0.10 / 0.29 over the same budget. The story is identical to fold 1, only with tighter (lower-variance) numbers.
+
+### Our models (fold 1, min-face=40)
 
 | Model | dets | AP@0.3 | recall@0.3 | prec@0.3 | AP@0.5 | recall@0.5 | prec@0.5 |
 |---|---|---|---|---|---|---|---|
@@ -64,7 +76,7 @@ Protocol / honest caveats:
 
 Best of ours: **celeba_aligned__24_v2_s11_tuned**. The 19×19 models are clearly worse (5000+ detections → more false positives). All of our models emit ~3000–5500 detections for 515 faces (~10–18 false positives per image): the negative-rejection learned from Caltech/CBCL negatives does not generalize to in-the-wild backgrounds.
 
-### OpenCV cascades (min-face=40)
+### OpenCV cascades (fold 1, min-face=40)
 
 | Cascade | dets | AP@0.3 | recall@0.3 | prec@0.3 | AP@0.5 | recall@0.5 | prec@0.5 |
 |---|---|---|---|---|---|---|---|
@@ -134,14 +146,14 @@ The evaluator follows OpenCV's `HaarEvaluator` exactly, in the "scale the image"
 
 `default` and `alt` are axis-aligned stump cascades and port exactly (the single `alt` mismatch is one borderline rounding case). `alt2` and `alt_tree` use CART trees (multiple internal nodes per weak classifier), which `OpenCVCascade` does not implement, the converter rejects them with a clear error.
 
-**Detection-level behaviour.** Window-level math is exact, but end-to-end detection differs slightly from cv2's `detectMultiScale` because cv2 confirms/groups via `minNeighbors` (requires ≥N overlapping windows, which suppresses isolated false positives) whereas our pipeline emits raw windows and leaves grouping to `non_maximum_supression`. The native `default` on FDDB fold 1 (290 images, baked-in growth=1.1, shift=2):
+**Detection-level behaviour.** Window-level math is exact, but end-to-end detection differs slightly from cv2's `detectMultiScale` because cv2 confirms/groups via `minNeighbors` (requires ≥N overlapping windows, which suppresses isolated false positives) whereas our pipeline emits raw windows and leaves grouping to `non_maximum_supression`. The native `default` on FDDB all 10 folds (2845 images, baked-in growth=1.1, shift=2):
 
 | Detector | AP@0.3 | recall@0.3 | prec@0.3 | AP@0.5 | recall@0.5 | prec@0.5 |
 |---|---|---|---|---|---|---|
-| opencv:default (cv2, minNeighbors=2) | 0.733 | 0.750 | 0.742 | 0.665 | 0.689 | 0.683 |
-| **opencv_default.pkl (native, our NMS)** | 0.719 | 0.736 | 0.660 | 0.599 | 0.639 | 0.573 |
+| opencv:default (cv2, minNeighbors=2) | 0.736 | 0.751 | 0.763 | 0.683 | 0.709 | 0.720 |
+| **opencv_default.pkl (native, our NMS)** | 0.724 | 0.740 | 0.655 | 0.624 | 0.658 | 0.582 |
 
-The native port tracks cv2 closely (AP@0.3 0.719 vs 0.733 ≈ 98%, recall 0.736 vs 0.750); the residual gap is grouping (NMS vs `minNeighbors`, which costs some precision) + pyramid resampling, not the cascade math. For cv2-identical numbers (with `minNeighbors`), use `tools/baseline_opencv.py` / the cv2 path in `tools/eval_fddb.py`. Detection false positives in `main.py detect` clean up with `--detect-min-score` (the native model's raw scores run ~70–330, so e.g. `--detect-min-score 150` keeps the confident boxes).
+The native port tracks cv2 closely (AP@0.3 0.724 vs 0.736 ≈ 98%, recall 0.740 vs 0.751); the residual gap is grouping (NMS vs `minNeighbors`, which costs some precision) + pyramid resampling, not the cascade math. For cv2-identical numbers (with `minNeighbors`), use `tools/baseline_opencv.py` / the cv2 path in `tools/eval_fddb.py`. Detection false positives in `main.py detect` clean up with `--detect-min-score` (the native model's raw scores run ~70–330, so e.g. `--detect-min-score 150` keeps the confident boxes).
 
 Build and use:
 
