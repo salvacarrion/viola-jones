@@ -1,6 +1,9 @@
 # Re-evaluation: Mon Oct  5 17:30:52 CEST 2026
 # python : Python 3.13.5
 # fddb   : eval folds=2,3,4,5,6,7,8,9,10, box transform fitted on folds=1
+# NOTE: produced by tools/reeval.sh at commit 1c7a789, with every training run under its
+#       original file name. Shipped as: celeba_aligned__24_v2_s11_tuned -> weights/24/celeba.pkl,
+#       celeba_aligned+cbcl__19_v2_tuned -> weights/19/celeba_cbcl.pkl, cbcl__19_v2_tuned -> weights/19/cbcl.pkl.
 
 ######################## 1) CBCL PATCH BENCHMARK ########################
 

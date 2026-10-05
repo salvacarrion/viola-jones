@@ -273,8 +273,8 @@ Then:
 ```bash
 python main.py detect \
     --detect-images images/people.png images/judybats.jpg \
-    --detect-output images/outputs/celeba_aligned__24_v2_s11 \
-    --weights-path weights/24/celeba_aligned__24_v2_s11_tuned.pkl
+    --detect-output images/outputs/24_celeba \
+    --weights-path weights/24/celeba.pkl
 ```
 
 And the in-the-wild benchmark against OpenCV (boxes fitted on fold 1, metrics on the held-out folds 2-10):
@@ -299,7 +299,6 @@ python tools/eval_fddb.py --weights weights/24/<model>.pkl --cascade default \
 ## 8. Common gotchas
 
 - **Stale feature cache**: changing `--face-source` without deleting `data/<res>_<src>/_cache/` reuses old features with the new `train_pos` (a silent mismatch). Fix: `rm -rf data/<res>_<src>/_cache/` before retraining on different data. The `--drop-low-score-pos` filter already rotates the cache automatically.
-- **Stale `cvj_weights_*.pkl`**: the extension scripts (`scripts/run_19_extend.sh`) refuse to start if there is an un-renamed `cvj_weights_*.pkl` in `weights/<res>/`. Clean up or rename first.
 - **Weights auto-pick**: if you omit `--weights-path` in test/detect, the most recent `cvj_weights_*.pkl` under `weights/` (by mtime) is used, falling back to the shipped best model on a fresh clone. Handy for iterating; dangerous with several runs in parallel.
 - **`--resume-from` checks the resolution**: the checkpoint only resumes if `clf.base_width` matches the data dir's resolution; a mismatch fails cleanly.
 - **`--min-stage-negatives 1000`**: if mining returns fewer, the cascade stops with a clear message. It is the typical symptom of an exhausted pool at late stages; the fix is to pre-mine a very-hard reservoir with [tools/mine_hard_negatives_raw.py](../tools/mine_hard_negatives_raw.py) and pass it via `--very-hard-neg-pool`.

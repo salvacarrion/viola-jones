@@ -24,7 +24,7 @@ Wire into training with:
 
 Usage:
     python tools/score_faces.py \\
-        --weights weights/19/cbcl__19_v2.pkl \\
+        --weights weights/19/cbcl.pkl \\
         --data-dir data/19_celeba_aligned
 """
 

@@ -1,27 +1,27 @@
 #!/usr/bin/env bash
 #
-# Re-evaluation harness for the README / docs comparison tables.
-#
-# Runs, for the CANONICAL models only (not the intermediate s10/s12/ext
-# checkpoints):
-#   1) CBCL patch benchmark        (main.py test)            -> F1 table
-#   2) FDDB in-the-wild benchmark  (tools/eval_fddb.py)      -> AP/recall table
+# Re-evaluation harness for the shipped checkpoints:
+#   1) CBCL patch benchmark        (main.py test)               -> F1
+#   2) FDDB in-the-wild benchmark  (tools/eval_fddb.py)         -> AP / recall / precision vs OpenCV
+#      2b) window diagnostic       (tools/diagnose_fddb_windows.py)
 #   3) OpenCV patch baseline       (tools/baseline_opencv.py)
 #   4) Native OpenCV port build    (tools/convert_opencv_cascade.py)
 #   5) (opt) per-stage diagnose    (tools/diagnose_cascade.py)
-#   6) (opt) re-tune thresholds    (tools/tune_thresholds.py)
 #
-# Everything is teed to results_reeval.txt — send that file back.
+# Everything is teed to results_reeval.txt.
 #
 # FDDB protocol: each detector's box transform (its crop convention -> FDDB's
 # face box) is fitted on FIT_FOLDS and every metric is reported on the
 # disjoint FOLDS, both with raw boxes and with `+box` face boxes.
 #
+# The committed results_reeval.txt was produced at commit 1c7a789 with every
+# training run (the per-model tables in the docs); check that commit out to
+# regenerate it. This version only evaluates what ships in weights/.
+#
 # Usage:
-#   tools/reeval.sh                     # FDDB folds 2-10, boxes fitted on fold 1 (~30 min)
+#   tools/reeval.sh                     # FDDB folds 2-10, boxes fitted on fold 1 (~40 min)
 #   tools/reeval.sh 2                   # one held-out fold (fast smoke)
-#   DIAGNOSE=1 tools/reeval.sh          # also dump per-stage diagnose
-#   TUNE=1     tools/reeval.sh          # also regenerate the *_tuned.pkl files
+#   DIAGNOSE=1 tools/reeval.sh          # also dump the per-stage CBCL diagnose
 #
 # Env knobs: FOLDS overrides the positional arg; FIT_FOLDS (default 1);
 # SKIP_FDDB=1 / SKIP_CBCL=1 to skip a whole section.
@@ -32,6 +32,8 @@ cd "$ROOT" || exit 1
 FOLDS="${1:-${FOLDS:-2,3,4,5,6,7,8,9,10}}"
 FIT_FOLDS="${FIT_FOLDS:-1}"
 RES="$ROOT/results_reeval.txt"
+BEST=weights/24/celeba.pkl
+OTHERS=(weights/19/celeba_cbcl.pkl weights/19/cbcl.pkl)
 
 {
   echo "# Re-evaluation: $(LC_ALL=C date)"
@@ -43,30 +45,16 @@ say()  { echo "$@" | tee -a "$RES"; }
 hdr()  { say ""; say "######################## $* ########################"; }
 runpy(){ python "$@" 2>/dev/null | tee -a "$RES"; }   # tqdm/cv2 noise -> /dev/null
 
-# Canonical models: "name:resdir" (data dir only sets the test-patch size;
-# the CBCL test set is identical across all data/<res>_* bundles).
-CANON_19=(cbcl__19_v1 cbcl__19_v2 celeba_aligned__19_v1 celeba_aligned__19_v2 \
-          celeba_aligned_filtered__19_v1 celeba_aligned+cbcl__19_v1 celeba_aligned+cbcl__19_v2)
-CANON_24=(cbcl__24_smoke celeba_aligned__24_v1 celeba_aligned__24_v2_s11)
-
 # ============================================================================
-# 1) CBCL patch benchmark  (refreshes the F1 table)
+# 1) CBCL patch benchmark (the test set is identical in every data/<res>_*
+#    bundle; the data dir only sets the patch size)
 # ============================================================================
 if [ "${SKIP_CBCL:-0}" != "1" ]; then
   hdr "1) CBCL PATCH BENCHMARK"
-  for m in "${CANON_19[@]}"; do
-    for v in "" _tuned; do
-      f="weights/19/${m}${v}.pkl"; [ -f "$f" ] || continue
-      say ""; say "### CBCL ${m}${v}"
-      runpy main.py test --weights-path "$f" --data-dir data/19_cbcl
-    done
-  done
-  for m in "${CANON_24[@]}"; do
-    for v in "" _tuned; do
-      f="weights/24/${m}${v}.pkl"; [ -f "$f" ] || continue
-      say ""; say "### CBCL ${m}${v}"
-      runpy main.py test --weights-path "$f" --data-dir data/24_cbcl
-    done
+  for f in "$BEST" "${OTHERS[@]}"; do
+    res="$(basename "$(dirname "$f")")"
+    say ""; say "### CBCL $f"
+    runpy main.py test --weights-path "$f" --data-dir "data/${res}_cbcl"
   done
 fi
 
@@ -79,25 +67,17 @@ if [ "${SKIP_FDDB:-0}" != "1" ]; then
   hdr "2) FDDB IN-THE-WILD  (eval folds=$FOLDS, box fit folds=$FIT_FOLDS, IoU 0.3 & 0.5)"
   FD=(--folds "$FOLDS" --box-fit-folds "$FIT_FOLDS" --iou 0.3,0.5)
 
-  say ""; say "### FDDB  ours=celeba_aligned__24_v2_s11_tuned (pyramid=image)  +  cv2:default"
-  runpy tools/eval_fddb.py --weights weights/24/celeba_aligned__24_v2_s11_tuned.pkl \
-        --cascade default "${FD[@]}"
+  say ""; say "### FDDB  ours=$BEST (pyramid=image)  +  cv2:default"
+  runpy tools/eval_fddb.py --weights "$BEST" --cascade default "${FD[@]}"
 
-  say ""; say "### FDDB  ours=celeba_aligned__24_v2_s11_tuned (pyramid=features, LEGACY pre-fix inference)"
-  runpy tools/eval_fddb.py --weights weights/24/celeba_aligned__24_v2_s11_tuned.pkl \
-        --skip-opencv --pyramid features "${FD[@]}"
+  say ""; say "### FDDB  ours=$BEST (pyramid=features, LEGACY pre-fix inference)"
+  runpy tools/eval_fddb.py --weights "$BEST" --skip-opencv --pyramid features "${FD[@]}"
 
-  say ""; say "### FDDB  ours=celeba_aligned__24_v2_s11_tuned (min-face=80, sensitivity)"
-  runpy tools/eval_fddb.py --weights weights/24/celeba_aligned__24_v2_s11_tuned.pkl \
-        --skip-opencv --min-face 80 "${FD[@]}"
+  say ""; say "### FDDB  ours=$BEST (min-face=80, sensitivity)"
+  runpy tools/eval_fddb.py --weights "$BEST" --skip-opencv --min-face 80 "${FD[@]}"
 
-  # Every other canonical model (tuned thresholds: on FDDB they beat the raw
-  # ones), for the per-model FDDB column of the README table.
-  for m in "${CANON_19[@]}" "${CANON_24[@]}"; do
-    [ "$m" = celeba_aligned__24_v2_s11 ] && continue
-    res="${m##*__}"; res="${res%%_*}"
-    f="weights/${res}/${m}_tuned.pkl"; [ -f "$f" ] || continue
-    say ""; say "### FDDB  ours=${m}_tuned"
+  for f in "${OTHERS[@]}"; do
+    say ""; say "### FDDB  ours=$f"
     runpy tools/eval_fddb.py --weights "$f" --skip-opencv "${FD[@]}"
   done
 
@@ -114,9 +94,9 @@ if [ "${SKIP_FDDB:-0}" != "1" ]; then
 
   hdr "2b) FDDB WINDOW DIAGNOSTIC (folds=$FIT_FOLDS: background FPR per window + per-stage rejection)"
   runpy tools/diagnose_fddb_windows.py --folds "$FIT_FOLDS" \
-        --weights weights/24/celeba_aligned__24_v2_s11_tuned.pkl weights/24/opencv_default.pkl
+        --weights "$BEST" weights/24/opencv_default.pkl
   runpy tools/diagnose_fddb_windows.py --folds "$FIT_FOLDS" --pyramid features \
-        --weights weights/24/celeba_aligned__24_v2_s11_tuned.pkl
+        --weights "$BEST"
 fi
 
 # ============================================================================
@@ -133,35 +113,11 @@ runpy tools/convert_opencv_cascade.py --cascade default
 runpy tools/convert_opencv_cascade.py --cascade alt
 
 # ============================================================================
-# 5) (optional) per-stage diagnose for docs/RESULTS
+# 5) (optional) per-stage diagnose on CBCL
 # ============================================================================
 if [ "${DIAGNOSE:-0}" = "1" ]; then
-  hdr "5) DIAGNOSE (per-stage, ⭐ model)"
-  runpy tools/diagnose_cascade.py \
-        --weights weights/24/celeba_aligned__24_v2_s11_tuned.pkl \
-        --data-dir data/24_celeba_aligned
-fi
-
-# ============================================================================
-# 6) (optional) regenerate *_tuned.pkl  (the tuned files already exist)
-# ============================================================================
-if [ "${TUNE:-0}" = "1" ]; then
-  hdr "6) RE-TUNE THRESHOLDS (regenerates *_tuned.pkl)"
-  for pair in \
-    "weights/19/cbcl__19_v1.pkl:data/19_cbcl" \
-    "weights/19/cbcl__19_v2.pkl:data/19_cbcl" \
-    "weights/19/celeba_aligned__19_v1.pkl:data/19_celeba_aligned" \
-    "weights/19/celeba_aligned__19_v2.pkl:data/19_celeba_aligned" \
-    "weights/19/celeba_aligned_filtered__19_v1.pkl:data/19_celeba_aligned" \
-    "weights/19/celeba_aligned+cbcl__19_v1.pkl:data/19_celeba_aligned+cbcl" \
-    "weights/19/celeba_aligned+cbcl__19_v2.pkl:data/19_celeba_aligned+cbcl" \
-    "weights/24/cbcl__24_smoke.pkl:data/24_cbcl" \
-    "weights/24/celeba_aligned__24_v1.pkl:data/24_celeba_aligned" \
-    "weights/24/celeba_aligned__24_v2_s11.pkl:data/24_celeba_aligned" ; do
-    w="${pair%%:*}"; d="${pair##*:}"; [ -f "$w" ] || continue
-    say ""; say "### TUNE $w"
-    runpy tools/tune_thresholds.py --weights "$w" --data-dir "$d" --objective f1
-  done
+  hdr "5) DIAGNOSE (per-stage, best model)"
+  runpy tools/diagnose_cascade.py --weights "$BEST" --data-dir data/24_celeba_aligned
 fi
 
 hdr "DONE -> $RES"

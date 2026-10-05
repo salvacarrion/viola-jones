@@ -219,7 +219,7 @@ def test(weights_path, data_dir):
 
 
 # Best shipped model; used when no training checkpoint exists (fresh clone).
-DEFAULT_WEIGHTS = "weights/24/celeba_aligned__24_v2_s11_tuned.pkl"
+DEFAULT_WEIGHTS = "weights/24/celeba.pkl"
 
 
 def pick_weights(path=None):

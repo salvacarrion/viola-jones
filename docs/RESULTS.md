@@ -2,14 +2,16 @@
 
 Detailed metrics for every training run, in chronological order. All numbers are on the **CBCL benchmark test split**: 472 faces / 23 573 non-faces. In-the-wild numbers for every model (FDDB) are in [OPENCV_COMPARISON_FINDINGS.md](OPENCV_COMPARISON_FINDINGS.md#per-model-folds-2-10-face-boxes-tuned-thresholds).
 
+Only three training runs ship in `weights/`, renamed for readability: `celeba_aligned__24_v2_s11_tuned` as `24/celeba.pkl` (⭐), `celeba_aligned+cbcl__19_v2_tuned` as `19/celeba_cbcl.pkl` and `cbcl__19_v2_tuned` as `19/cbcl.pkl`, plus the OpenCV port. Every checkpoint below under its original name, and the experiment-only scripts and tools that were removed in the final cleanup (`scripts/run_19_*.sh`, `tools/extend_stage.py`, `tools/benchmark_precompute.py`), are in the git history: `git checkout 1c7a789 -- weights/ scripts/ tools/`.
+
 ## Summary
 
 | Best model                                                | Resolution | Faces                                   | Stages | Recall | Spec  |    F1    |
 | --------------------------------------------------------- | :--------: | --------------------------------------- | :----: | :----: | :---: | :------: |
-| `weights/24/celeba_aligned__24_v2_s11_tuned.pkl` ⭐        |   24×24    | CelebA<sub>aligned</sub> only, F1-tuned  |   11   | 0.625  | 0.995 | **0.661** |
-| `weights/19/celeba_aligned+cbcl__19_v2_tuned.pkl`         |   19×19    | CelebA<sub>aligned</sub>+CBCL, F1-tuned |   16   | 0.625  | 0.995 | **0.661** |
+| `weights/24/celeba.pkl` ⭐        |   24×24    | CelebA<sub>aligned</sub> only, F1-tuned  |   11   | 0.625  | 0.995 | **0.661** |
+| `weights/19/celeba_cbcl.pkl`         |   19×19    | CelebA<sub>aligned</sub>+CBCL, F1-tuned |   16   | 0.625  | 0.995 | **0.661** |
 | `weights/24/cbcl__24_smoke_tuned.pkl`                     |   24×24    | CBCL (adaptive trainer), F1-tuned       |   10   | 0.602  | 0.996 | **0.660** |
-| `weights/19/cbcl__19_v2_tuned.pkl`                        |   19×19    | CBCL, F1-tuned                          |   15   | 0.606  | 0.995 | **0.658** |
+| `weights/19/cbcl.pkl`                        |   19×19    | CBCL, F1-tuned                          |   15   | 0.606  | 0.995 | **0.658** |
 | `cvj_weights_1777843525_tuned.pkl` (not shipped)          |   24×24    | CBCL (historical fixed-layers), F1-tuned |   9    | 0.597  | 0.995 | **0.653** |
 | `weights/19/celeba_aligned+cbcl__19_v1_tuned.pkl`         |   19×19    | CelebA<sub>aligned</sub>+CBCL, F1-tuned |   11   | 0.614  | 0.994 |   0.639   |
 | `weights/19/cbcl__19_v1_tuned.pkl`                        |   19×19    | CBCL, F1-tuned                          |   11   | 0.583  | 0.995 |   0.634   |
@@ -99,7 +101,7 @@ Stages 13–15 each converged on `target_stage_fpr 0.65` (final FPR 0.636, 0.636
 | --: | -----: | --: | --: | :------: | :-------: | :----: | :----: | :----: |
 | 283 | 23 413 | 160 | 189 |  0.985   |   0.639   | 0.600  | 0.993  | 0.619  |
 
-**After post-hoc F1 tuning (`weights/19/cbcl__19_v2_tuned.pkl`):**
+**After post-hoc F1 tuning (`weights/19/cbcl.pkl`):**
 
 | TP  | TN     | FP  | FN  | Accuracy | Precision | Recall |  Spec  |     F1    |
 | --: | -----: | --: | --: | :------: | :-------: | :----: | :----: | :-------: |
@@ -255,7 +257,7 @@ Stages 12–16 each hit `target_stage_fpr 0.65` (final FPR 0.632, 0.646, 0.644, 
 | --: | -----: | --: | --: | :------: | :-------: | :----: | :----: | :----: |
 | 271 | 23 453 | 120 | 201 |  0.987   |   0.693   | 0.574  | 0.995  | 0.628  |
 
-**After post-hoc F1 tuning (`weights/19/celeba_aligned+cbcl__19_v2_tuned.pkl`):**
+**After post-hoc F1 tuning (`weights/19/celeba_cbcl.pkl`):**
 
 | TP  | TN     | FP  | FN  | Accuracy | Precision | Recall |  Spec  |     F1    |
 | --: | -----: | --: | --: | :------: | :-------: | :----: | :----: | :-------: |
@@ -375,7 +377,7 @@ Cumulative val recall stayed flat at 0.958 across all four stages, **recall is n
 | **s11** | **0.661** | 0.625 | 0.995 |   0.701   |
 |  s12  |   0.654    | 0.583  | 0.996 |   0.745   |
 
-**s11 wins.** s10 → s11 gains +1.0 pp (stage 11's 16% rejection earns its keep); s11 → s12 loses −0.7 pp (stage 12 over-trades recall for precision). So depth helps up to stage 11 and hurts past it, the F1 peak coincides exactly with where per-stage rejection collapses. Notably the deepening lifted benchmark F1 from v1's 0.629 → **0.661**, not just real-image cleanliness as predicted: replacing v1's single bloated 800-WC stage 9 with three lean rejection stages (9+10+11) raised precision on CBCL too. **`weights/24/celeba_aligned__24_v2_s11_tuned.pkl` (11 stages, tuned F1=0.661) is the final, recommended general-purpose detector**, tied with the project's best benchmark model (mixed 19×19 v2) while being the most real-image-robust (CelebA diversity, 24×24 resolution).
+**s11 wins.** s10 → s11 gains +1.0 pp (stage 11's 16% rejection earns its keep); s11 → s12 loses −0.7 pp (stage 12 over-trades recall for precision). So depth helps up to stage 11 and hurts past it, the F1 peak coincides exactly with where per-stage rejection collapses. Notably the deepening lifted benchmark F1 from v1's 0.629 → **0.661**, not just real-image cleanliness as predicted: replacing v1's single bloated 800-WC stage 9 with three lean rejection stages (9+10+11) raised precision on CBCL too. **`weights/24/celeba.pkl` (11 stages, tuned F1=0.661) is the final, recommended general-purpose detector**, tied with the project's best benchmark model (mixed 19×19 v2) while being the most real-image-robust (CelebA diversity, 24×24 resolution).
 
 ---
 

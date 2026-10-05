@@ -30,14 +30,25 @@ The training data is auto-downloaded on first run from the [`salvacarrion/face-d
 
 ### Try the pretrained detector
 
-The trained cascades ship with the repo under `weights/` (a few hundred KB each), so no data download or training is needed. The best one, `weights/24/celeba_aligned__24_v2_s11_tuned.pkl`, is used by default:
+A few trained cascades ship with the repo (a few hundred KB each), so no data download or training is needed. The best one is used by default:
 
 ```bash
 python main.py detect --detect-images path/to/photo.jpg --detect-min-score 0.8
 # -> images/outputs/photo_detected.png
 ```
 
-`--detect-min-score 0.8` drops low-confidence boxes (the sample outputs in `images/outputs/best/` use it); pick another model with `--weights-path weights/<res>/<model>.pkl`. See [Limitations](#limitations-and-next-steps) for what it cannot detect.
+`--detect-min-score 0.8` drops low-confidence boxes (the sample outputs in `images/outputs/best/` use it). See [Limitations](#limitations-and-next-steps) for what it cannot detect. Pick another model with `--weights-path`:
+
+| Checkpoint | Window | Trained on | Stages | CBCL F1 | FDDB AP@0.3 / @0.5 |
+| :-- | :-: | :-- | :-: | :-: | :-: |
+| `weights/24/celeba.pkl` ⭐ (default) | 24×24 | aligned CelebA faces | 11 | 0.661 | **0.589** / 0.471 |
+| `weights/19/celeba_cbcl.pkl` | 19×19 | aligned CelebA + CBCL faces | 16 | 0.661 | 0.578 / **0.483** |
+| `weights/19/cbcl.pkl` | 19×19 | CBCL faces (the classic Viola-Jones-era set) | 15 | 0.658 | 0.539 / 0.475 |
+| `weights/24/opencv_default.pkl` | 24×24 | OpenCV's pretrained cascade, ported to this pipeline | 25 | 0.000 | 0.730 / 0.703 |
+
+Comparing them shows the effect of resolution (24 vs 19) and of the face source (CelebA vs CBCL), and how far our cascades are from OpenCV's under identical inference. All three of ours use post-hoc tuned thresholds and carry their FDDB face-box mapping.
+
+Sample outputs of each are in [`images/outputs/`](images/outputs/).
 
 ### Train your own
 
@@ -82,7 +93,9 @@ Per-patch face / non-face classification on the CBCL benchmark (472 faces, 23 57
 |   24×24    | CelebA<sub>aligned</sub>            |   v1    | 9 (capped)  | 0.521 |       0.629        |           ~31 h            |         0.469          |
 |   24×24    | CelebA<sub>aligned</sub> ⭐          | **v2**  |     11      | 0.571 |     **0.661**      |           ~95 h            |         0.471          |
 
-⭐ **Project best: `weights/24/celeba_aligned__24_v2_s11_tuned.pkl`** (tuned recall 0.625, specificity 0.995, precision 0.701, F1 0.661). CelebA-only caps at 3 stages at 19×19 but trains an 11-stage cascade at 24×24, which confirms the resolution hypothesis. The benchmark F1 understates it: the test set is CBCL, which this model never trains on. On in-the-wild FDDB it has the best AP@0.3 (0.589) and recall of all our models; the 24×24 CBCL smoke model trades recall for precision and edges it at IoU 0.5 (0.503 vs 0.471).
+⭐ **Project best: `weights/24/celeba.pkl`** (tuned recall 0.625, specificity 0.995, precision 0.701, F1 0.661). CelebA-only caps at 3 stages at 19×19 but trains an 11-stage cascade at 24×24, which confirms the resolution hypothesis. The benchmark F1 understates it: the test set is CBCL, which this model never trains on. On in-the-wild FDDB it has the best AP@0.3 (0.589) and recall of all our models; the 24×24 CBCL smoke model trades recall for precision and edges it at IoU 0.5 (0.503 vs 0.471).
+
+Three of these training runs ship in `weights/` under readable names (see [Quickstart](#try-the-pretrained-detector)): CelebA<sub>aligned</sub> v2 ⭐ as `24/celeba.pkl`, CelebA<sub>aligned</sub>+CBCL v2 as `19/celeba_cbcl.pkl` and CBCL v2 as `19/cbcl.pkl`, all tuned. Every run in the table can be restored under its original name with `git checkout 1c7a789 -- weights/`.
 
 <sup>‡</sup> In-the-wild average precision on FDDB folds 2-10 at IoU 0.5, tuned model, boxes mapped to FDDB's face-box convention (see below). OpenCV's `default` cascade scores 0.726 under the same protocol.
 
@@ -133,7 +146,7 @@ The port reproduces OpenCV's `default` cascade with 100% window-level parity (`a
 - `main.py`: CLI for `train` / `test` / `detect`.
 - `violajones.py`, `adaboost.py`, `weakclassifier.py`, `features.py`, `utils.py`: the detector.
 - `opencv_cascade.py`: native NumPy evaluator for an OpenCV cascade.
-- `tools/`: data prep, threshold tuning, per-stage diagnostics, hard-negative mining, OpenCV baseline (`baseline_opencv.py`), FDDB evaluation and box fitting (`eval_fddb.py`), FDDB figures (`draw_fddb_comparison.py`), cascade conversion (`convert_opencv_cascade.py`), and the `reeval.sh` runner that regenerates every number in the tables ([results_reeval.txt](results_reeval.txt)).
+- `tools/`: data prep, threshold tuning, per-stage diagnostics, hard-negative mining, OpenCV baseline (`baseline_opencv.py`), FDDB evaluation and box fitting (`eval_fddb.py`), FDDB figures (`draw_fddb_comparison.py`), cascade conversion (`convert_opencv_cascade.py`), and the `reeval.sh` runner that re-evaluates the shipped checkpoints (the numbers in the docs, for every training run, are in [results_reeval.txt](results_reeval.txt)).
 
 ## Docs
 

@@ -21,9 +21,9 @@ than `--target-neg-per-stage`.
 
 Usage:
     python tools/mine_hard_negatives_raw.py \\
-        --weights weights/19/cbcl__19_v2.pkl \\
+        --weights weights/19/cbcl.pkl \\
         --target 15000 \\
-        --out weights/19/cbcl__19_v2__vhardneg_raw.npy
+        --out weights/19/cbcl__vhardneg_raw.npy
 """
 
 import argparse

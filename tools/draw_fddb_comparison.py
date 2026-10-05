@@ -12,7 +12,7 @@ changes is our detector.
 
 Usage:
     python tools/draw_fddb_comparison.py \
-        --weights weights/24/celeba_aligned__24_v2_s11_tuned.pkl \
+        --weights weights/24/celeba.pkl \
         --names 2002/08/02/big/img_1231 2003/01/17/big/img_610
 """
 

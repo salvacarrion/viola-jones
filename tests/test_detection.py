@@ -7,7 +7,7 @@ from utils import apply_box_transform
 from violajones import ViolaJones
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-WEIGHTS = os.path.join(REPO, "weights/24/celeba_aligned__24_v2_s11_tuned.pkl")
+WEIGHTS = os.path.join(REPO, "weights/24/celeba.pkl")
 IMAGE = os.path.join(REPO, "images/people.png")
 
 

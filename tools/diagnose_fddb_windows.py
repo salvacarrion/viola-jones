@@ -13,10 +13,10 @@ OpenCV port: 4.5e-4 vs 2.5e-5 background windows per window on fold 1).
 
 Usage:
     python tools/diagnose_fddb_windows.py --folds 1 \
-        --weights weights/24/celeba_aligned__24_v2_s11_tuned.pkl weights/24/opencv_default.pkl
+        --weights weights/24/celeba.pkl weights/24/opencv_default.pkl
     # legacy feature-scaled pyramid, for the before/after comparison
     python tools/diagnose_fddb_windows.py --folds 1 --pyramid features \
-        --weights weights/24/celeba_aligned__24_v2_s11_tuned.pkl
+        --weights weights/24/celeba.pkl
 """
 
 import argparse

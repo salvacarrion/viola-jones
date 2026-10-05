@@ -34,3 +34,7 @@ bootstrap/
 # MediaPipe face_landmarker checkpoint — auto-downloaded by maintainer
 # scripts in tools/dataset_build/ on first use (~3.7 MB).
 tools/dataset_build/_models/
+
+# Local assistant config, not part of the project.
+CLAUDE.md
+.claude/

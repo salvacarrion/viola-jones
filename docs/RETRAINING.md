@@ -6,7 +6,7 @@ The repo is archived with the models it has. This document is for whoever retrai
 
 After the two inference/evaluation fixes (image pyramid and face-box mapping, see [OPENCV_COMPARISON_FINDINGS.md](OPENCV_COMPARISON_FINDINGS.md#what-was-wrong-three-causes-measured)), the best model finds faces almost as often as OpenCV on FDDB (recall at IoU 0.3 within a few points) but lets far more background through. That residual gap is a property of the trained cascade and needs retraining:
 
-| FDDB fold 1, min-face 40, image pyramid | Ours (`celeba_aligned__24_v2_s11_tuned`) | OpenCV `default` (native port) |
+| FDDB fold 1, min-face 40, image pyramid | Ours (`weights/24/celeba.pkl`) | OpenCV `default` (native port) |
 | :-- | :-: | :-: |
 | Windows evaluated | 30.3 M | 15.5 M |
 | Background windows passing the cascade, per window | 4.5e-4 | 2.5e-5 |
@@ -22,7 +22,7 @@ The per-stage rejection on real FDDB windows shows where it goes wrong. Ours rej
 | OpenCV: stumps | 9 | 16 | 27 | 32 | 52 | 53 | 62 | 72 | 83 | 91 | 99 |
 | OpenCV: rejected | 58% | 51% | 47% | 43% | 43% | 38% | 32% | 33% | 30% | 39% | 29% |
 
-Both tables come from `python tools/diagnose_fddb_windows.py --folds 1 --weights weights/24/celeba_aligned__24_v2_s11_tuned.pkl weights/24/opencv_default.pkl`. The deep stages learned to reject the hard negatives they were trained on (Caltech-256 object photos and CBCL non-faces) and those do not look like the background of photos with people in them (clothes, hands, hair, crowds, text). Fold 2 gives the same numbers to within a point.
+Both tables come from `python tools/diagnose_fddb_windows.py --folds 1 --weights weights/24/celeba.pkl weights/24/opencv_default.pkl`. The deep stages learned to reject the hard negatives they were trained on (Caltech-256 object photos and CBCL non-faces) and those do not look like the background of photos with people in them (clothes, hands, hair, crowds, text). Fold 2 gives the same numbers to within a point.
 
 ## How much could it improve?
 
@@ -86,7 +86,7 @@ Already done, keep it that way: training patches are downsized with PIL bilinear
 
 These were tried and measured; they move the operating point, not the ceiling:
 
-- More weak classifiers in a saturated stage (`tools/extend_stage.py`): FPR got worse, see [FINDINGS.md](FINDINGS.md#2424-the-ceiling-moves-up-but-its-still-there).
+- More weak classifiers in a saturated stage (the removed `tools/extend_stage.py`): FPR got worse, see [FINDINGS.md](FINDINGS.md#2424-the-ceiling-moves-up-but-its-still-there).
 - Deeper cascades on the same negatives: stage 12 of the best model rejected 6% of its own training negatives with 1600 stumps.
 - `--detect-min-score` and OpenCV-style `minNeighbors` grouping: they only thin the score-ranked list, trading recall for precision. A score cut cannot raise AP by construction, and requiring 2 to 4 fused windows per detection lowered FDDB AP by 0.005 to 0.015 in the post-mortem.
 - `--detect-min-face 80`: it looked like a 4× AP win under the old raw-box evaluation, but only because bigger windows overlap FDDB's tall boxes more. With face boxes it lowers FDDB AP (folds 2-10: 0.59 → 0.43 at IoU 0.3, 0.47 → 0.32 at IoU 0.5) by dropping every face under ~110 px.
