@@ -1,0 +1,1635 @@
+# Re-evaluation: Mon Oct  5 17:30:52 CEST 2026
+# python : Python 3.13.5
+# fddb   : eval folds=2,3,4,5,6,7,8,9,10, box transform fitted on folds=1
+
+######################## 1) CBCL PATCH BENCHMARK ########################
+
+### CBCL cbcl__19_v1
+Starting (mode=test)...
+Using weights: weights/19/cbcl__19_v1.pkl
+Test set: 472 faces + 23,573 non-faces @ 19×19
+
+Evaluating...
+
+Metrics:
+	- true_positive: 310
+	- true_negative: 23,267
+	- false_positive: 306
+	- false_negative: 162
+	- accuracy: 0.981
+	- precision: 0.503
+	- recall: 0.657
+	- specifity: 0.987
+	- f1: 0.570
+
+Total time: 00:00:5.77429461
+
+### CBCL cbcl__19_v1_tuned
+Starting (mode=test)...
+Using weights: weights/19/cbcl__19_v1_tuned.pkl
+Test set: 472 faces + 23,573 non-faces @ 19×19
+
+Evaluating...
+
+Metrics:
+	- true_positive: 275
+	- true_negative: 23,452
+	- false_positive: 121
+	- false_negative: 197
+	- accuracy: 0.987
+	- precision: 0.694
+	- recall: 0.583
+	- specifity: 0.995
+	- f1: 0.634
+
+Total time: 00:00:4.26264405
+
+### CBCL cbcl__19_v2
+Starting (mode=test)...
+Using weights: weights/19/cbcl__19_v2.pkl
+Test set: 472 faces + 23,573 non-faces @ 19×19
+
+Evaluating...
+
+Metrics:
+	- true_positive: 283
+	- true_negative: 23,413
+	- false_positive: 160
+	- false_negative: 189
+	- accuracy: 0.985
+	- precision: 0.639
+	- recall: 0.600
+	- specifity: 0.993
+	- f1: 0.619
+
+Total time: 00:00:8.28558111
+
+### CBCL cbcl__19_v2_tuned
+Starting (mode=test)...
+Using weights: weights/19/cbcl__19_v2_tuned.pkl
+Test set: 472 faces + 23,573 non-faces @ 19×19
+
+Evaluating...
+
+Metrics:
+	- true_positive: 286
+	- true_negative: 23,462
+	- false_positive: 111
+	- false_negative: 186
+	- accuracy: 0.988
+	- precision: 0.720
+	- recall: 0.606
+	- specifity: 0.995
+	- f1: 0.658
+
+Total time: 00:00:7.76541114
+
+### CBCL celeba_aligned__19_v1
+Starting (mode=test)...
+Using weights: weights/19/celeba_aligned__19_v1.pkl
+Test set: 472 faces + 23,573 non-faces @ 19×19
+
+Evaluating...
+
+Metrics:
+	- true_positive: 448
+	- true_negative: 16,538
+	- false_positive: 7,035
+	- false_negative: 24
+	- accuracy: 0.706
+	- precision: 0.060
+	- recall: 0.949
+	- specifity: 0.702
+	- f1: 0.113
+
+Total time: 00:00:13.81326699
+
+### CBCL celeba_aligned__19_v1_tuned
+Starting (mode=test)...
+Using weights: weights/19/celeba_aligned__19_v1_tuned.pkl
+Test set: 472 faces + 23,573 non-faces @ 19×19
+
+Evaluating...
+
+Metrics:
+	- true_positive: 259
+	- true_negative: 23,348
+	- false_positive: 225
+	- false_negative: 213
+	- accuracy: 0.982
+	- precision: 0.535
+	- recall: 0.549
+	- specifity: 0.990
+	- f1: 0.542
+
+Total time: 00:00:2.75452995
+
+### CBCL celeba_aligned__19_v2
+Starting (mode=test)...
+Using weights: weights/19/celeba_aligned__19_v2.pkl
+Test set: 472 faces + 23,573 non-faces @ 19×19
+
+Evaluating...
+
+Metrics:
+	- true_positive: 420
+	- true_negative: 20,163
+	- false_positive: 3,410
+	- false_negative: 52
+	- accuracy: 0.856
+	- precision: 0.110
+	- recall: 0.890
+	- specifity: 0.855
+	- f1: 0.195
+
+Total time: 00:00:29.71913218
+
+### CBCL celeba_aligned__19_v2_tuned
+Starting (mode=test)...
+Using weights: weights/19/celeba_aligned__19_v2_tuned.pkl
+Test set: 472 faces + 23,573 non-faces @ 19×19
+
+Evaluating...
+
+Metrics:
+	- true_positive: 255
+	- true_negative: 23,372
+	- false_positive: 201
+	- false_negative: 217
+	- accuracy: 0.983
+	- precision: 0.559
+	- recall: 0.540
+	- specifity: 0.991
+	- f1: 0.550
+
+Total time: 00:00:3.68933988
+
+### CBCL celeba_aligned_filtered__19_v1
+Starting (mode=test)...
+Using weights: weights/19/celeba_aligned_filtered__19_v1.pkl
+Test set: 472 faces + 23,573 non-faces @ 19×19
+
+Evaluating...
+
+Metrics:
+	- true_positive: 433
+	- true_negative: 16,301
+	- false_positive: 7,272
+	- false_negative: 39
+	- accuracy: 0.696
+	- precision: 0.056
+	- recall: 0.917
+	- specifity: 0.692
+	- f1: 0.106
+
+Total time: 00:00:12.63779998
+
+### CBCL celeba_aligned_filtered__19_v1_tuned
+Starting (mode=test)...
+Using weights: weights/19/celeba_aligned_filtered__19_v1_tuned.pkl
+Test set: 472 faces + 23,573 non-faces @ 19×19
+
+Evaluating...
+
+Metrics:
+	- true_positive: 238
+	- true_negative: 23,494
+	- false_positive: 79
+	- false_negative: 234
+	- accuracy: 0.987
+	- precision: 0.751
+	- recall: 0.504
+	- specifity: 0.997
+	- f1: 0.603
+
+Total time: 00:00:5.69481874
+
+### CBCL celeba_aligned+cbcl__19_v1
+Starting (mode=test)...
+Using weights: weights/19/celeba_aligned+cbcl__19_v1.pkl
+Test set: 472 faces + 23,573 non-faces @ 19×19
+
+Evaluating...
+
+Metrics:
+	- true_positive: 308
+	- true_negative: 23,319
+	- false_positive: 254
+	- false_negative: 164
+	- accuracy: 0.983
+	- precision: 0.548
+	- recall: 0.653
+	- specifity: 0.989
+	- f1: 0.596
+
+Total time: 00:00:7.00785112
+
+### CBCL celeba_aligned+cbcl__19_v1_tuned
+Starting (mode=test)...
+Using weights: weights/19/celeba_aligned+cbcl__19_v1_tuned.pkl
+Test set: 472 faces + 23,573 non-faces @ 19×19
+
+Evaluating...
+
+Metrics:
+	- true_positive: 290
+	- true_negative: 23,428
+	- false_positive: 145
+	- false_negative: 182
+	- accuracy: 0.986
+	- precision: 0.667
+	- recall: 0.614
+	- specifity: 0.994
+	- f1: 0.639
+
+Total time: 00:00:3.73784304
+
+### CBCL celeba_aligned+cbcl__19_v2
+Starting (mode=test)...
+Using weights: weights/19/celeba_aligned+cbcl__19_v2.pkl
+Test set: 472 faces + 23,573 non-faces @ 19×19
+
+Evaluating...
+
+Metrics:
+	- true_positive: 271
+	- true_negative: 23,453
+	- false_positive: 120
+	- false_negative: 201
+	- accuracy: 0.987
+	- precision: 0.693
+	- recall: 0.574
+	- specifity: 0.995
+	- f1: 0.628
+
+Total time: 00:00:9.50983310
+
+### CBCL celeba_aligned+cbcl__19_v2_tuned
+Starting (mode=test)...
+Using weights: weights/19/celeba_aligned+cbcl__19_v2_tuned.pkl
+Test set: 472 faces + 23,573 non-faces @ 19×19
+
+Evaluating...
+
+Metrics:
+	- true_positive: 295
+	- true_negative: 23,448
+	- false_positive: 125
+	- false_negative: 177
+	- accuracy: 0.987
+	- precision: 0.702
+	- recall: 0.625
+	- specifity: 0.995
+	- f1: 0.661
+
+Total time: 00:00:7.98217702
+
+### CBCL cbcl__24_smoke
+Starting (mode=test)...
+Using weights: weights/24/cbcl__24_smoke.pkl
+Test set: 472 faces + 23,573 non-faces @ 24×24
+
+Evaluating...
+
+Metrics:
+	- true_positive: 354
+	- true_negative: 22,996
+	- false_positive: 577
+	- false_negative: 118
+	- accuracy: 0.971
+	- precision: 0.380
+	- recall: 0.750
+	- specifity: 0.976
+	- f1: 0.505
+
+Total time: 00:00:7.63796997
+
+### CBCL cbcl__24_smoke_tuned
+Starting (mode=test)...
+Using weights: weights/24/cbcl__24_smoke_tuned.pkl
+Test set: 472 faces + 23,573 non-faces @ 24×24
+
+Evaluating...
+
+Metrics:
+	- true_positive: 284
+	- true_negative: 23,468
+	- false_positive: 105
+	- false_negative: 188
+	- accuracy: 0.988
+	- precision: 0.730
+	- recall: 0.602
+	- specifity: 0.996
+	- f1: 0.660
+
+Total time: 00:00:6.88198185
+
+### CBCL celeba_aligned__24_v1
+Starting (mode=test)...
+Using weights: weights/24/celeba_aligned__24_v1.pkl
+Test set: 472 faces + 23,573 non-faces @ 24×24
+
+Evaluating...
+
+Metrics:
+	- true_positive: 336
+	- true_negative: 23,091
+	- false_positive: 482
+	- false_negative: 136
+	- accuracy: 0.974
+	- precision: 0.411
+	- recall: 0.712
+	- specifity: 0.980
+	- f1: 0.521
+
+Total time: 00:00:9.89899302
+
+### CBCL celeba_aligned__24_v1_tuned
+Starting (mode=test)...
+Using weights: weights/24/celeba_aligned__24_v1_tuned.pkl
+Test set: 472 faces + 23,573 non-faces @ 24×24
+
+Evaluating...
+
+Metrics:
+	- true_positive: 264
+	- true_negative: 23,469
+	- false_positive: 104
+	- false_negative: 208
+	- accuracy: 0.987
+	- precision: 0.717
+	- recall: 0.559
+	- specifity: 0.996
+	- f1: 0.629
+
+Total time: 00:00:4.44768786
+
+### CBCL celeba_aligned__24_v2_s11
+Starting (mode=test)...
+Using weights: weights/24/celeba_aligned__24_v2_s11.pkl
+Test set: 472 faces + 23,573 non-faces @ 24×24
+
+Evaluating...
+
+Metrics:
+	- true_positive: 333
+	- true_negative: 23,211
+	- false_positive: 362
+	- false_negative: 139
+	- accuracy: 0.979
+	- precision: 0.479
+	- recall: 0.706
+	- specifity: 0.985
+	- f1: 0.571
+
+Total time: 00:00:13.10266709
+
+### CBCL celeba_aligned__24_v2_s11_tuned
+Starting (mode=test)...
+Using weights: weights/24/celeba_aligned__24_v2_s11_tuned.pkl
+Test set: 472 faces + 23,573 non-faces @ 24×24
+
+Evaluating...
+
+Metrics:
+	- true_positive: 295
+	- true_negative: 23,447
+	- false_positive: 126
+	- false_negative: 177
+	- accuracy: 0.987
+	- precision: 0.701
+	- recall: 0.625
+	- specifity: 0.995
+	- f1: 0.661
+
+Total time: 00:00:6.99118996
+
+######################## 2) FDDB IN-THE-WILD  (eval folds=2,3,4,5,6,7,8,9,10, box fit folds=1, IoU 0.3 & 0.5) ########################
+
+### FDDB  ours=celeba_aligned__24_v2_s11_tuned (pyramid=image)  +  cv2:default
+FDDB: 2,555 images, 4,656 GT faces (folds [2, 3, 4, 5, 6, 7, 8, 9, 10])  |  IoU>=[0.3, 0.5]  min-face=40px
+Box transform fitted on folds [1] (290 images, disjoint from eval)
+
+Our cascade: weights/24/celeba_aligned__24_v2_s11_tuned.pkl  (pyramid=image)
+
+OpenCV cascade (4.13.0): /opt/homebrew/anaconda3/lib/python3.13/site-packages/cv2/data/haarcascade_frontalface_default.xml
+
+[ours] box transform (fitted on folds [1]): sw=1.431 sh=2.141 dcx=+0.025 dcy=-0.225
+
+[opencv:default] box transform (fitted on folds [1]): sw=0.899 sh=1.365 dcx=+0.015 dcy=-0.073
+
+############ IoU >= 0.30 ############
+
+[ours]
+	- detections: 11,110  (TP 1,701 / FP 9,409)
+	- AP:          0.160
+	- recall:      0.365   (operating point: all detections)
+	- precision:   0.153
+	- recall @ total-FP budget:
+	       50 FP: 0.019
+	      100 FP: 0.035
+	      284 FP: 0.079
+	      500 FP: 0.114
+	     1000 FP: 0.183
+
+[ours+box]
+	- detections: 11,110  (TP 3,336 / FP 7,774)
+	- AP:          0.589
+	- recall:      0.716   (operating point: all detections)
+	- precision:   0.300
+	- recall @ total-FP budget:
+	       50 FP: 0.203
+	      100 FP: 0.297
+	      284 FP: 0.408
+	      500 FP: 0.474
+	     1000 FP: 0.557
+
+[opencv:default]
+	- detections: 4,571  (TP 3,500 / FP 1,071)
+	- AP:          0.736
+	- recall:      0.752   (operating point: all detections)
+	- precision:   0.766
+	- recall @ total-FP budget:
+	       50 FP: 0.552
+	      100 FP: 0.623
+	      284 FP: 0.696
+	      500 FP: 0.724
+	     1000 FP: 0.747
+
+[opencv:default+box]
+	- detections: 4,571  (TP 3,504 / FP 1,067)
+	- AP:          0.737
+	- recall:      0.753   (operating point: all detections)
+	- precision:   0.767
+	- recall @ total-FP budget:
+	       50 FP: 0.559
+	      100 FP: 0.623
+	      284 FP: 0.698
+	      500 FP: 0.725
+	     1000 FP: 0.748
+
+=== Comparison (same FDDB images, IoU>=0.30) ===
+detector                 AP  recall   prec  R@100FP
+---------------------------------------------------
+ours                  0.160   0.365  0.153    0.035
+ours+box              0.589   0.716  0.300    0.297
+opencv:default        0.736   0.752  0.766    0.623
+opencv:default+box    0.737   0.753  0.767    0.623
+
+############ IoU >= 0.50 ############
+
+[ours]
+	- detections: 11,110  (TP 171 / FP 10,939)
+	- AP:          0.001
+	- recall:      0.037   (operating point: all detections)
+	- precision:   0.015
+	- recall @ total-FP budget:
+	       50 FP: 0.001
+	      100 FP: 0.002
+	      284 FP: 0.003
+	      500 FP: 0.004
+	     1000 FP: 0.006
+
+[ours+box]
+	- detections: 11,110  (TP 2,776 / FP 8,334)
+	- AP:          0.471
+	- recall:      0.596   (operating point: all detections)
+	- precision:   0.250
+	- recall @ total-FP budget:
+	       50 FP: 0.112
+	      100 FP: 0.214
+	      284 FP: 0.337
+	      500 FP: 0.388
+	     1000 FP: 0.464
+
+[opencv:default]
+	- detections: 4,571  (TP 3,311 / FP 1,260)
+	- AP:          0.686
+	- recall:      0.711   (operating point: all detections)
+	- precision:   0.724
+	- recall @ total-FP budget:
+	       50 FP: 0.441
+	      100 FP: 0.519
+	      284 FP: 0.636
+	      500 FP: 0.674
+	     1000 FP: 0.703
+
+[opencv:default+box]
+	- detections: 4,571  (TP 3,456 / FP 1,115)
+	- AP:          0.726
+	- recall:      0.742   (operating point: all detections)
+	- precision:   0.756
+	- recall @ total-FP budget:
+	       50 FP: 0.535
+	      100 FP: 0.612
+	      284 FP: 0.685
+	      500 FP: 0.714
+	     1000 FP: 0.738
+
+=== Comparison (same FDDB images, IoU>=0.50) ===
+detector                 AP  recall   prec  R@100FP
+---------------------------------------------------
+ours                  0.001   0.037  0.015    0.002
+ours+box              0.471   0.596  0.250    0.214
+opencv:default        0.686   0.711  0.724    0.519
+opencv:default+box    0.726   0.742  0.756    0.612
+
+Total time: 00:06:11.24465108
+
+### FDDB  ours=celeba_aligned__24_v2_s11_tuned (pyramid=features, LEGACY pre-fix inference)
+FDDB: 2,555 images, 4,656 GT faces (folds [2, 3, 4, 5, 6, 7, 8, 9, 10])  |  IoU>=[0.3, 0.5]  min-face=40px
+Box transform fitted on folds [1] (290 images, disjoint from eval)
+
+Our cascade: weights/24/celeba_aligned__24_v2_s11_tuned.pkl  (pyramid=features)
+
+[ours] box transform (fitted on folds [1]): sw=1.455 sh=2.194 dcx=+0.016 dcy=-0.208
+
+############ IoU >= 0.30 ############
+
+[ours]
+	- detections: 28,807  (TP 1,297 / FP 27,510)
+	- AP:          0.069
+	- recall:      0.279   (operating point: all detections)
+	- precision:   0.045
+	- recall @ total-FP budget:
+	       50 FP: 0.008
+	      100 FP: 0.016
+	      284 FP: 0.042
+	      500 FP: 0.064
+	     1000 FP: 0.099
+
+[ours+box]
+	- detections: 28,807  (TP 3,335 / FP 25,472)
+	- AP:          0.461
+	- recall:      0.716   (operating point: all detections)
+	- precision:   0.116
+	- recall @ total-FP budget:
+	       50 FP: 0.113
+	      100 FP: 0.180
+	      284 FP: 0.263
+	      500 FP: 0.327
+	     1000 FP: 0.396
+
+=== Comparison (same FDDB images, IoU>=0.30) ===
+detector                 AP  recall   prec  R@100FP
+---------------------------------------------------
+ours                  0.069   0.279  0.045    0.016
+ours+box              0.461   0.716  0.116    0.180
+
+############ IoU >= 0.50 ############
+
+[ours]
+	- detections: 28,807  (TP 156 / FP 28,651)
+	- AP:          0.000
+	- recall:      0.034   (operating point: all detections)
+	- precision:   0.005
+	- recall @ total-FP budget:
+	       50 FP: 0.000
+	      100 FP: 0.000
+	      284 FP: 0.002
+	      500 FP: 0.003
+	     1000 FP: 0.005
+
+[ours+box]
+	- detections: 28,807  (TP 2,449 / FP 26,358)
+	- AP:          0.285
+	- recall:      0.526   (operating point: all detections)
+	- precision:   0.085
+	- recall @ total-FP budget:
+	       50 FP: 0.034
+	      100 FP: 0.067
+	      284 FP: 0.163
+	      500 FP: 0.212
+	     1000 FP: 0.283
+
+=== Comparison (same FDDB images, IoU>=0.50) ===
+detector                 AP  recall   prec  R@100FP
+---------------------------------------------------
+ours                  0.000   0.034  0.005    0.000
+ours+box              0.285   0.526  0.085    0.067
+
+Total time: 00:06:30.74197793
+
+### FDDB  ours=celeba_aligned__24_v2_s11_tuned (min-face=80, sensitivity)
+FDDB: 2,555 images, 4,656 GT faces (folds [2, 3, 4, 5, 6, 7, 8, 9, 10])  |  IoU>=[0.3, 0.5]  min-face=80px
+Box transform fitted on folds [1] (290 images, disjoint from eval)
+
+Our cascade: weights/24/celeba_aligned__24_v2_s11_tuned.pkl  (pyramid=image)
+
+[ours] box transform (fitted on folds [1]): sw=1.222 sh=1.841 dcx=+0.016 dcy=-0.204
+
+############ IoU >= 0.30 ############
+
+[ours]
+	- detections: 5,235  (TP 2,064 / FP 3,171)
+	- AP:          0.303
+	- recall:      0.443   (operating point: all detections)
+	- precision:   0.394
+	- recall @ total-FP budget:
+	       50 FP: 0.063
+	      100 FP: 0.107
+	      284 FP: 0.178
+	      500 FP: 0.236
+	     1000 FP: 0.311
+
+[ours+box]
+	- detections: 5,235  (TP 2,372 / FP 2,863)
+	- AP:          0.425
+	- recall:      0.509   (operating point: all detections)
+	- precision:   0.453
+	- recall @ total-FP budget:
+	       50 FP: 0.200
+	      100 FP: 0.233
+	      284 FP: 0.306
+	      500 FP: 0.349
+	     1000 FP: 0.415
+
+=== Comparison (same FDDB images, IoU>=0.30) ===
+detector                 AP  recall   prec  R@100FP
+---------------------------------------------------
+ours                  0.303   0.443  0.394    0.107
+ours+box              0.425   0.509  0.453    0.233
+
+############ IoU >= 0.50 ############
+
+[ours]
+	- detections: 5,235  (TP 696 / FP 4,539)
+	- AP:          0.025
+	- recall:      0.149   (operating point: all detections)
+	- precision:   0.133
+	- recall @ total-FP budget:
+	       50 FP: 0.003
+	      100 FP: 0.006
+	      284 FP: 0.014
+	      500 FP: 0.022
+	     1000 FP: 0.041
+
+[ours+box]
+	- detections: 5,235  (TP 1,870 / FP 3,365)
+	- AP:          0.321
+	- recall:      0.402   (operating point: all detections)
+	- precision:   0.357
+	- recall @ total-FP budget:
+	       50 FP: 0.145
+	      100 FP: 0.183
+	      284 FP: 0.242
+	      500 FP: 0.286
+	     1000 FP: 0.332
+
+=== Comparison (same FDDB images, IoU>=0.50) ===
+detector                 AP  recall   prec  R@100FP
+---------------------------------------------------
+ours                  0.025   0.149  0.133    0.006
+ours+box              0.321   0.402  0.357    0.183
+
+Total time: 00:02:51.85146189
+
+### FDDB  ours=cbcl__19_v1_tuned
+FDDB: 2,555 images, 4,656 GT faces (folds [2, 3, 4, 5, 6, 7, 8, 9, 10])  |  IoU>=[0.3, 0.5]  min-face=40px
+Box transform fitted on folds [1] (290 images, disjoint from eval)
+
+Our cascade: weights/19/cbcl__19_v1_tuned.pkl  (pyramid=image)
+
+[ours] box transform (fitted on folds [1]): sw=1.589 sh=2.393 dcx=+0.033 dcy=-0.210
+
+############ IoU >= 0.30 ############
+
+[ours]
+	- detections: 6,233  (TP 579 / FP 5,654)
+	- AP:          0.016
+	- recall:      0.124   (operating point: all detections)
+	- precision:   0.093
+	- recall @ total-FP budget:
+	       50 FP: 0.003
+	      100 FP: 0.005
+	      284 FP: 0.008
+	      500 FP: 0.014
+	     1000 FP: 0.030
+
+[ours+box]
+	- detections: 6,233  (TP 2,896 / FP 3,337)
+	- AP:          0.526
+	- recall:      0.622   (operating point: all detections)
+	- precision:   0.465
+	- recall @ total-FP budget:
+	       50 FP: 0.202
+	      100 FP: 0.272
+	      284 FP: 0.376
+	      500 FP: 0.437
+	     1000 FP: 0.500
+
+=== Comparison (same FDDB images, IoU>=0.30) ===
+detector                 AP  recall   prec  R@100FP
+---------------------------------------------------
+ours                  0.016   0.124  0.093    0.005
+ours+box              0.526   0.622  0.465    0.272
+
+############ IoU >= 0.50 ############
+
+[ours]
+	- detections: 6,233  (TP 31 / FP 6,202)
+	- AP:          0.000
+	- recall:      0.007   (operating point: all detections)
+	- precision:   0.005
+	- recall @ total-FP budget:
+	       50 FP: 0.000
+	      100 FP: 0.000
+	      284 FP: 0.000
+	      500 FP: 0.000
+	     1000 FP: 0.000
+
+[ours+box]
+	- detections: 6,233  (TP 2,585 / FP 3,648)
+	- AP:          0.459
+	- recall:      0.555   (operating point: all detections)
+	- precision:   0.415
+	- recall @ total-FP budget:
+	       50 FP: 0.168
+	      100 FP: 0.226
+	      284 FP: 0.328
+	      500 FP: 0.391
+	     1000 FP: 0.453
+
+=== Comparison (same FDDB images, IoU>=0.50) ===
+detector                 AP  recall   prec  R@100FP
+---------------------------------------------------
+ours                  0.000   0.007  0.005    0.000
+ours+box              0.459   0.555  0.415    0.226
+
+Total time: 00:01:37.26987314
+
+### FDDB  ours=cbcl__19_v2_tuned
+FDDB: 2,555 images, 4,656 GT faces (folds [2, 3, 4, 5, 6, 7, 8, 9, 10])  |  IoU>=[0.3, 0.5]  min-face=40px
+Box transform fitted on folds [1] (290 images, disjoint from eval)
+
+Our cascade: weights/19/cbcl__19_v2_tuned.pkl  (pyramid=image)
+
+[ours] box transform (fitted on folds [1]): sw=1.580 sh=2.385 dcx=+0.031 dcy=-0.212
+
+############ IoU >= 0.30 ############
+
+[ours]
+	- detections: 6,547  (TP 634 / FP 5,913)
+	- AP:          0.020
+	- recall:      0.136   (operating point: all detections)
+	- precision:   0.097
+	- recall @ total-FP budget:
+	       50 FP: 0.004
+	      100 FP: 0.006
+	      284 FP: 0.011
+	      500 FP: 0.017
+	     1000 FP: 0.035
+
+[ours+box]
+	- detections: 6,547  (TP 2,942 / FP 3,605)
+	- AP:          0.539
+	- recall:      0.632   (operating point: all detections)
+	- precision:   0.449
+	- recall @ total-FP budget:
+	       50 FP: 0.224
+	      100 FP: 0.293
+	      284 FP: 0.393
+	      500 FP: 0.448
+	     1000 FP: 0.514
+
+=== Comparison (same FDDB images, IoU>=0.30) ===
+detector                 AP  recall   prec  R@100FP
+---------------------------------------------------
+ours                  0.020   0.136  0.097    0.006
+ours+box              0.539   0.632  0.449    0.293
+
+############ IoU >= 0.50 ############
+
+[ours]
+	- detections: 6,547  (TP 34 / FP 6,513)
+	- AP:          0.000
+	- recall:      0.007   (operating point: all detections)
+	- precision:   0.005
+	- recall @ total-FP budget:
+	       50 FP: 0.000
+	      100 FP: 0.000
+	      284 FP: 0.000
+	      500 FP: 0.000
+	     1000 FP: 0.001
+
+[ours+box]
+	- detections: 6,547  (TP 2,641 / FP 3,906)
+	- AP:          0.475
+	- recall:      0.567   (operating point: all detections)
+	- precision:   0.403
+	- recall @ total-FP budget:
+	       50 FP: 0.190
+	      100 FP: 0.242
+	      284 FP: 0.346
+	      500 FP: 0.402
+	     1000 FP: 0.465
+
+=== Comparison (same FDDB images, IoU>=0.50) ===
+detector                 AP  recall   prec  R@100FP
+---------------------------------------------------
+ours                  0.000   0.007  0.005    0.000
+ours+box              0.475   0.567  0.403    0.242
+
+Total time: 00:03:44.17509794
+
+### FDDB  ours=celeba_aligned__19_v1_tuned
+FDDB: 2,555 images, 4,656 GT faces (folds [2, 3, 4, 5, 6, 7, 8, 9, 10])  |  IoU>=[0.3, 0.5]  min-face=40px
+Box transform fitted on folds [1] (290 images, disjoint from eval)
+
+Our cascade: weights/19/celeba_aligned__19_v1_tuned.pkl  (pyramid=image)
+
+[ours] box transform (fitted on folds [1]): sw=1.440 sh=2.164 dcx=+0.014 dcy=-0.217
+
+############ IoU >= 0.30 ############
+
+[ours]
+	- detections: 14,724  (TP 1,467 / FP 13,257)
+	- AP:          0.106
+	- recall:      0.315   (operating point: all detections)
+	- precision:   0.100
+	- recall @ total-FP budget:
+	       50 FP: 0.014
+	      100 FP: 0.029
+	      284 FP: 0.060
+	      500 FP: 0.082
+	     1000 FP: 0.123
+
+[ours+box]
+	- detections: 14,724  (TP 3,163 / FP 11,561)
+	- AP:          0.470
+	- recall:      0.679   (operating point: all detections)
+	- precision:   0.215
+	- recall @ total-FP budget:
+	       50 FP: 0.112
+	      100 FP: 0.157
+	      284 FP: 0.250
+	      500 FP: 0.311
+	     1000 FP: 0.408
+
+=== Comparison (same FDDB images, IoU>=0.30) ===
+detector                 AP  recall   prec  R@100FP
+---------------------------------------------------
+ours                  0.106   0.315  0.100    0.029
+ours+box              0.470   0.679  0.215    0.157
+
+############ IoU >= 0.50 ############
+
+[ours]
+	- detections: 14,724  (TP 213 / FP 14,511)
+	- AP:          0.001
+	- recall:      0.046   (operating point: all detections)
+	- precision:   0.014
+	- recall @ total-FP budget:
+	       50 FP: 0.001
+	      100 FP: 0.001
+	      284 FP: 0.004
+	      500 FP: 0.005
+	     1000 FP: 0.008
+
+[ours+box]
+	- detections: 14,724  (TP 2,365 / FP 12,359)
+	- AP:          0.310
+	- recall:      0.508   (operating point: all detections)
+	- precision:   0.161
+	- recall @ total-FP budget:
+	       50 FP: 0.050
+	      100 FP: 0.096
+	      284 FP: 0.174
+	      500 FP: 0.224
+	     1000 FP: 0.297
+
+=== Comparison (same FDDB images, IoU>=0.50) ===
+detector                 AP  recall   prec  R@100FP
+---------------------------------------------------
+ours                  0.001   0.046  0.014    0.001
+ours+box              0.310   0.508  0.161    0.096
+
+Total time: 00:01:11.44387913
+
+### FDDB  ours=celeba_aligned__19_v2_tuned
+FDDB: 2,555 images, 4,656 GT faces (folds [2, 3, 4, 5, 6, 7, 8, 9, 10])  |  IoU>=[0.3, 0.5]  min-face=40px
+Box transform fitted on folds [1] (290 images, disjoint from eval)
+
+Our cascade: weights/19/celeba_aligned__19_v2_tuned.pkl  (pyramid=image)
+
+[ours] box transform (fitted on folds [1]): sw=1.456 sh=2.184 dcx=+0.012 dcy=-0.213
+
+############ IoU >= 0.30 ############
+
+[ours]
+	- detections: 13,868  (TP 1,530 / FP 12,338)
+	- AP:          0.127
+	- recall:      0.329   (operating point: all detections)
+	- precision:   0.110
+	- recall @ total-FP budget:
+	       50 FP: 0.017
+	      100 FP: 0.034
+	      284 FP: 0.072
+	      500 FP: 0.101
+	     1000 FP: 0.148
+
+[ours+box]
+	- detections: 13,868  (TP 3,225 / FP 10,643)
+	- AP:          0.517
+	- recall:      0.693   (operating point: all detections)
+	- precision:   0.233
+	- recall @ total-FP budget:
+	       50 FP: 0.146
+	      100 FP: 0.205
+	      284 FP: 0.313
+	      500 FP: 0.374
+	     1000 FP: 0.469
+
+=== Comparison (same FDDB images, IoU>=0.30) ===
+detector                 AP  recall   prec  R@100FP
+---------------------------------------------------
+ours                  0.127   0.329  0.110    0.034
+ours+box              0.517   0.693  0.233    0.205
+
+############ IoU >= 0.50 ############
+
+[ours]
+	- detections: 13,868  (TP 222 / FP 13,646)
+	- AP:          0.002
+	- recall:      0.048   (operating point: all detections)
+	- precision:   0.016
+	- recall @ total-FP budget:
+	       50 FP: 0.000
+	      100 FP: 0.002
+	      284 FP: 0.003
+	      500 FP: 0.005
+	     1000 FP: 0.009
+
+[ours+box]
+	- detections: 13,868  (TP 2,483 / FP 11,385)
+	- AP:          0.362
+	- recall:      0.533   (operating point: all detections)
+	- precision:   0.179
+	- recall @ total-FP budget:
+	       50 FP: 0.064
+	      100 FP: 0.128
+	      284 FP: 0.227
+	      500 FP: 0.284
+	     1000 FP: 0.355
+
+=== Comparison (same FDDB images, IoU>=0.50) ===
+detector                 AP  recall   prec  R@100FP
+---------------------------------------------------
+ours                  0.002   0.048  0.016    0.002
+ours+box              0.362   0.533  0.179    0.128
+
+Total time: 00:02:43.53915310
+
+### FDDB  ours=celeba_aligned_filtered__19_v1_tuned
+FDDB: 2,555 images, 4,656 GT faces (folds [2, 3, 4, 5, 6, 7, 8, 9, 10])  |  IoU>=[0.3, 0.5]  min-face=40px
+Box transform fitted on folds [1] (290 images, disjoint from eval)
+
+Our cascade: weights/19/celeba_aligned_filtered__19_v1_tuned.pkl  (pyramid=image)
+
+[ours] box transform (fitted on folds [1]): sw=1.564 sh=2.372 dcx=+0.019 dcy=-0.232
+
+############ IoU >= 0.30 ############
+
+[ours]
+	- detections: 4,746  (TP 625 / FP 4,121)
+	- AP:          0.024
+	- recall:      0.134   (operating point: all detections)
+	- precision:   0.132
+	- recall @ total-FP budget:
+	       50 FP: 0.004
+	      100 FP: 0.005
+	      284 FP: 0.015
+	      500 FP: 0.025
+	     1000 FP: 0.045
+
+[ours+box]
+	- detections: 4,746  (TP 2,645 / FP 2,101)
+	- AP:          0.496
+	- recall:      0.568   (operating point: all detections)
+	- precision:   0.557
+	- recall @ total-FP budget:
+	       50 FP: 0.214
+	      100 FP: 0.270
+	      284 FP: 0.373
+	      500 FP: 0.424
+	     1000 FP: 0.489
+
+=== Comparison (same FDDB images, IoU>=0.30) ===
+detector                 AP  recall   prec  R@100FP
+---------------------------------------------------
+ours                  0.024   0.134  0.132    0.005
+ours+box              0.496   0.568  0.557    0.270
+
+############ IoU >= 0.50 ############
+
+[ours]
+	- detections: 4,746  (TP 25 / FP 4,721)
+	- AP:          0.000
+	- recall:      0.005   (operating point: all detections)
+	- precision:   0.005
+	- recall @ total-FP budget:
+	       50 FP: 0.000
+	      100 FP: 0.000
+	      284 FP: 0.000
+	      500 FP: 0.000
+	     1000 FP: 0.000
+
+[ours+box]
+	- detections: 4,746  (TP 2,398 / FP 2,348)
+	- AP:          0.439
+	- recall:      0.515   (operating point: all detections)
+	- precision:   0.505
+	- recall @ total-FP budget:
+	       50 FP: 0.190
+	      100 FP: 0.234
+	      284 FP: 0.320
+	      500 FP: 0.378
+	     1000 FP: 0.440
+
+=== Comparison (same FDDB images, IoU>=0.50) ===
+detector                 AP  recall   prec  R@100FP
+---------------------------------------------------
+ours                  0.000   0.005  0.005    0.000
+ours+box              0.439   0.515  0.505    0.234
+
+Total time: 00:01:42.96496606
+
+### FDDB  ours=celeba_aligned+cbcl__19_v1_tuned
+FDDB: 2,555 images, 4,656 GT faces (folds [2, 3, 4, 5, 6, 7, 8, 9, 10])  |  IoU>=[0.3, 0.5]  min-face=40px
+Box transform fitted on folds [1] (290 images, disjoint from eval)
+
+Our cascade: weights/19/celeba_aligned+cbcl__19_v1_tuned.pkl  (pyramid=image)
+
+[ours] box transform (fitted on folds [1]): sw=1.478 sh=2.225 dcx=+0.022 dcy=-0.223
+
+############ IoU >= 0.30 ############
+
+[ours]
+	- detections: 9,133  (TP 1,247 / FP 7,886)
+	- AP:          0.087
+	- recall:      0.268   (operating point: all detections)
+	- precision:   0.137
+	- recall @ total-FP budget:
+	       50 FP: 0.011
+	      100 FP: 0.018
+	      284 FP: 0.049
+	      500 FP: 0.074
+	     1000 FP: 0.112
+
+[ours+box]
+	- detections: 9,133  (TP 3,206 / FP 5,927)
+	- AP:          0.566
+	- recall:      0.689   (operating point: all detections)
+	- precision:   0.351
+	- recall @ total-FP budget:
+	       50 FP: 0.236
+	      100 FP: 0.276
+	      284 FP: 0.381
+	      500 FP: 0.441
+	     1000 FP: 0.521
+
+=== Comparison (same FDDB images, IoU>=0.30) ===
+detector                 AP  recall   prec  R@100FP
+---------------------------------------------------
+ours                  0.087   0.268  0.137    0.018
+ours+box              0.566   0.689  0.351    0.276
+
+############ IoU >= 0.50 ############
+
+[ours]
+	- detections: 9,133  (TP 102 / FP 9,031)
+	- AP:          0.000
+	- recall:      0.022   (operating point: all detections)
+	- precision:   0.011
+	- recall @ total-FP budget:
+	       50 FP: 0.000
+	      100 FP: 0.001
+	      284 FP: 0.001
+	      500 FP: 0.002
+	     1000 FP: 0.004
+
+[ours+box]
+	- detections: 9,133  (TP 2,751 / FP 6,382)
+	- AP:          0.472
+	- recall:      0.591   (operating point: all detections)
+	- precision:   0.301
+	- recall @ total-FP budget:
+	       50 FP: 0.178
+	      100 FP: 0.230
+	      284 FP: 0.325
+	      500 FP: 0.380
+	     1000 FP: 0.452
+
+=== Comparison (same FDDB images, IoU>=0.50) ===
+detector                 AP  recall   prec  R@100FP
+---------------------------------------------------
+ours                  0.000   0.022  0.011    0.001
+ours+box              0.472   0.591  0.301    0.230
+
+Total time: 00:02:4.99249220
+
+### FDDB  ours=celeba_aligned+cbcl__19_v2_tuned
+FDDB: 2,555 images, 4,656 GT faces (folds [2, 3, 4, 5, 6, 7, 8, 9, 10])  |  IoU>=[0.3, 0.5]  min-face=40px
+Box transform fitted on folds [1] (290 images, disjoint from eval)
+
+Our cascade: weights/19/celeba_aligned+cbcl__19_v2_tuned.pkl  (pyramid=image)
+
+[ours] box transform (fitted on folds [1]): sw=1.486 sh=2.257 dcx=+0.029 dcy=-0.233
+
+############ IoU >= 0.30 ############
+
+[ours]
+	- detections: 9,616  (TP 1,333 / FP 8,283)
+	- AP:          0.098
+	- recall:      0.286   (operating point: all detections)
+	- precision:   0.139
+	- recall @ total-FP budget:
+	       50 FP: 0.012
+	      100 FP: 0.019
+	      284 FP: 0.054
+	      500 FP: 0.081
+	     1000 FP: 0.120
+
+[ours+box]
+	- detections: 9,616  (TP 3,252 / FP 6,364)
+	- AP:          0.578
+	- recall:      0.698   (operating point: all detections)
+	- precision:   0.338
+	- recall @ total-FP budget:
+	       50 FP: 0.241
+	      100 FP: 0.297
+	      284 FP: 0.397
+	      500 FP: 0.459
+	     1000 FP: 0.532
+
+=== Comparison (same FDDB images, IoU>=0.30) ===
+detector                 AP  recall   prec  R@100FP
+---------------------------------------------------
+ours                  0.098   0.286  0.139    0.019
+ours+box              0.578   0.698  0.338    0.297
+
+############ IoU >= 0.50 ############
+
+[ours]
+	- detections: 9,616  (TP 133 / FP 9,483)
+	- AP:          0.001
+	- recall:      0.029   (operating point: all detections)
+	- precision:   0.014
+	- recall @ total-FP budget:
+	       50 FP: 0.001
+	      100 FP: 0.001
+	      284 FP: 0.002
+	      500 FP: 0.002
+	     1000 FP: 0.004
+
+[ours+box]
+	- detections: 9,616  (TP 2,794 / FP 6,822)
+	- AP:          0.483
+	- recall:      0.600   (operating point: all detections)
+	- precision:   0.291
+	- recall @ total-FP budget:
+	       50 FP: 0.176
+	      100 FP: 0.238
+	      284 FP: 0.346
+	      500 FP: 0.394
+	     1000 FP: 0.466
+
+=== Comparison (same FDDB images, IoU>=0.50) ===
+detector                 AP  recall   prec  R@100FP
+---------------------------------------------------
+ours                  0.001   0.029  0.014    0.001
+ours+box              0.483   0.600  0.291    0.238
+
+Total time: 00:05:0.97936082
+
+### FDDB  ours=cbcl__24_smoke_tuned
+FDDB: 2,555 images, 4,656 GT faces (folds [2, 3, 4, 5, 6, 7, 8, 9, 10])  |  IoU>=[0.3, 0.5]  min-face=40px
+Box transform fitted on folds [1] (290 images, disjoint from eval)
+
+Our cascade: weights/24/cbcl__24_smoke_tuned.pkl  (pyramid=image)
+
+[ours] box transform (fitted on folds [1]): sw=1.623 sh=2.486 dcx=+0.030 dcy=-0.226
+
+############ IoU >= 0.30 ############
+
+[ours]
+	- detections: 5,215  (TP 365 / FP 4,850)
+	- AP:          0.007
+	- recall:      0.078   (operating point: all detections)
+	- precision:   0.070
+	- recall @ total-FP budget:
+	       50 FP: 0.001
+	      100 FP: 0.001
+	      284 FP: 0.005
+	      500 FP: 0.008
+	     1000 FP: 0.018
+
+[ours+box]
+	- detections: 5,215  (TP 2,928 / FP 2,287)
+	- AP:          0.561
+	- recall:      0.629   (operating point: all detections)
+	- precision:   0.561
+	- recall @ total-FP budget:
+	       50 FP: 0.259
+	      100 FP: 0.319
+	      284 FP: 0.429
+	      500 FP: 0.488
+	     1000 FP: 0.550
+
+=== Comparison (same FDDB images, IoU>=0.30) ===
+detector                 AP  recall   prec  R@100FP
+---------------------------------------------------
+ours                  0.007   0.078  0.070    0.001
+ours+box              0.561   0.629  0.561    0.319
+
+############ IoU >= 0.50 ############
+
+[ours]
+	- detections: 5,215  (TP 25 / FP 5,190)
+	- AP:          0.000
+	- recall:      0.005   (operating point: all detections)
+	- precision:   0.005
+	- recall @ total-FP budget:
+	       50 FP: 0.000
+	      100 FP: 0.000
+	      284 FP: 0.000
+	      500 FP: 0.000
+	     1000 FP: 0.000
+
+[ours+box]
+	- detections: 5,215  (TP 2,676 / FP 2,539)
+	- AP:          0.503
+	- recall:      0.575   (operating point: all detections)
+	- precision:   0.513
+	- recall @ total-FP budget:
+	       50 FP: 0.221
+	      100 FP: 0.274
+	      284 FP: 0.387
+	      500 FP: 0.438
+	     1000 FP: 0.504
+
+=== Comparison (same FDDB images, IoU>=0.50) ===
+detector                 AP  recall   prec  R@100FP
+---------------------------------------------------
+ours                  0.000   0.005  0.005    0.000
+ours+box              0.503   0.575  0.513    0.274
+
+Total time: 00:01:59.78047609
+
+### FDDB  ours=celeba_aligned__24_v1_tuned
+FDDB: 2,555 images, 4,656 GT faces (folds [2, 3, 4, 5, 6, 7, 8, 9, 10])  |  IoU>=[0.3, 0.5]  min-face=40px
+Box transform fitted on folds [1] (290 images, disjoint from eval)
+
+Our cascade: weights/24/celeba_aligned__24_v1_tuned.pkl  (pyramid=image)
+
+[ours] box transform (fitted on folds [1]): sw=1.423 sh=2.159 dcx=+0.025 dcy=-0.222
+
+############ IoU >= 0.30 ############
+
+[ours]
+	- detections: 10,437  (TP 1,718 / FP 8,719)
+	- AP:          0.163
+	- recall:      0.369   (operating point: all detections)
+	- precision:   0.165
+	- recall @ total-FP budget:
+	       50 FP: 0.015
+	      100 FP: 0.034
+	      284 FP: 0.083
+	      500 FP: 0.117
+	     1000 FP: 0.186
+
+[ours+box]
+	- detections: 10,437  (TP 3,334 / FP 7,103)
+	- AP:          0.586
+	- recall:      0.716   (operating point: all detections)
+	- precision:   0.319
+	- recall @ total-FP budget:
+	       50 FP: 0.215
+	      100 FP: 0.295
+	      284 FP: 0.400
+	      500 FP: 0.465
+	     1000 FP: 0.546
+
+=== Comparison (same FDDB images, IoU>=0.30) ===
+detector                 AP  recall   prec  R@100FP
+---------------------------------------------------
+ours                  0.163   0.369  0.165    0.034
+ours+box              0.586   0.716  0.319    0.295
+
+############ IoU >= 0.50 ############
+
+[ours]
+	- detections: 10,437  (TP 175 / FP 10,262)
+	- AP:          0.001
+	- recall:      0.038   (operating point: all detections)
+	- precision:   0.017
+	- recall @ total-FP budget:
+	       50 FP: 0.000
+	      100 FP: 0.001
+	      284 FP: 0.002
+	      500 FP: 0.003
+	     1000 FP: 0.005
+
+[ours+box]
+	- detections: 10,437  (TP 2,781 / FP 7,656)
+	- AP:          0.469
+	- recall:      0.597   (operating point: all detections)
+	- precision:   0.266
+	- recall @ total-FP budget:
+	       50 FP: 0.125
+	      100 FP: 0.205
+	      284 FP: 0.331
+	      500 FP: 0.380
+	     1000 FP: 0.459
+
+=== Comparison (same FDDB images, IoU>=0.50) ===
+detector                 AP  recall   prec  R@100FP
+---------------------------------------------------
+ours                  0.001   0.038  0.017    0.001
+ours+box              0.469   0.597  0.266    0.205
+
+Total time: 00:03:28.29817319
+
+### FDDB  native port  weights/24/opencv_default.pkl
+FDDB: 2,555 images, 4,656 GT faces (folds [2, 3, 4, 5, 6, 7, 8, 9, 10])  |  IoU>=[0.3, 0.5]  min-face=40px
+Box transform fitted on folds [1] (290 images, disjoint from eval)
+
+Our cascade: weights/24/opencv_default.pkl  (pyramid=image)
+
+[ours] box transform (fitted on folds [1]): sw=0.930 sh=1.407 dcx=+0.014 dcy=-0.073
+
+############ IoU >= 0.30 ############
+
+[ours]
+	- detections: 5,267  (TP 3,449 / FP 1,818)
+	- AP:          0.725
+	- recall:      0.741   (operating point: all detections)
+	- precision:   0.655
+	- recall @ total-FP budget:
+	       50 FP: 0.596
+	      100 FP: 0.636
+	      284 FP: 0.678
+	      500 FP: 0.698
+	     1000 FP: 0.723
+
+[ours+box]
+	- detections: 5,267  (TP 3,470 / FP 1,797)
+	- AP:          0.730
+	- recall:      0.745   (operating point: all detections)
+	- precision:   0.659
+	- recall @ total-FP budget:
+	       50 FP: 0.604
+	      100 FP: 0.641
+	      284 FP: 0.684
+	      500 FP: 0.702
+	     1000 FP: 0.728
+
+=== Comparison (same FDDB images, IoU>=0.30) ===
+detector                 AP  recall   prec  R@100FP
+---------------------------------------------------
+ours                  0.725   0.741  0.655    0.636
+ours+box              0.730   0.745  0.659    0.641
+
+############ IoU >= 0.50 ############
+
+[ours]
+	- detections: 5,267  (TP 3,072 / FP 2,195)
+	- AP:          0.627
+	- recall:      0.660   (operating point: all detections)
+	- precision:   0.583
+	- recall @ total-FP budget:
+	       50 FP: 0.342
+	      100 FP: 0.431
+	      284 FP: 0.578
+	      500 FP: 0.613
+	     1000 FP: 0.642
+
+[ours+box]
+	- detections: 5,267  (TP 3,354 / FP 1,913)
+	- AP:          0.703
+	- recall:      0.720   (operating point: all detections)
+	- precision:   0.637
+	- recall @ total-FP budget:
+	       50 FP: 0.569
+	      100 FP: 0.614
+	      284 FP: 0.661
+	      500 FP: 0.681
+	     1000 FP: 0.704
+
+=== Comparison (same FDDB images, IoU>=0.50) ===
+detector                 AP  recall   prec  R@100FP
+---------------------------------------------------
+ours                  0.627   0.660  0.583    0.431
+ours+box              0.703   0.720  0.637    0.614
+
+Total time: 00:01:4.54434800
+
+### FDDB  cv2:alt (reference)
+FDDB: 2,555 images, 4,656 GT faces (folds [2, 3, 4, 5, 6, 7, 8, 9, 10])  |  IoU>=[0.3, 0.5]  min-face=40px
+Box transform fitted on folds [1] (290 images, disjoint from eval)
+
+OpenCV cascade (4.13.0): /opt/homebrew/anaconda3/lib/python3.13/site-packages/cv2/data/haarcascade_frontalface_alt.xml
+
+[opencv:alt] box transform (fitted on folds [1]): sw=0.924 sh=1.392 dcx=+0.013 dcy=-0.076
+
+############ IoU >= 0.30 ############
+
+[opencv:alt]
+	- detections: 3,693  (TP 3,450 / FP 243)
+	- AP:          0.738
+	- recall:      0.741   (operating point: all detections)
+	- precision:   0.934
+	- recall @ total-FP budget:
+	       50 FP: 0.686
+	      100 FP: 0.714
+	      284 FP: 0.741
+	      500 FP: 0.741
+	     1000 FP: 0.741
+
+[opencv:alt+box]
+	- detections: 3,693  (TP 3,455 / FP 238)
+	- AP:          0.739
+	- recall:      0.742   (operating point: all detections)
+	- precision:   0.936
+	- recall @ total-FP budget:
+	       50 FP: 0.688
+	      100 FP: 0.716
+	      284 FP: 0.742
+	      500 FP: 0.742
+	     1000 FP: 0.742
+
+=== Comparison (same FDDB images, IoU>=0.30) ===
+detector                 AP  recall   prec  R@100FP
+---------------------------------------------------
+opencv:alt            0.738   0.741  0.934    0.714
+opencv:alt+box        0.739   0.742  0.936    0.716
+
+############ IoU >= 0.50 ############
+
+[opencv:alt]
+	- detections: 3,693  (TP 3,243 / FP 450)
+	- AP:          0.681
+	- recall:      0.697   (operating point: all detections)
+	- precision:   0.878
+	- recall @ total-FP budget:
+	       50 FP: 0.451
+	      100 FP: 0.552
+	      284 FP: 0.678
+	      500 FP: 0.697
+	     1000 FP: 0.697
+
+[opencv:alt+box]
+	- detections: 3,693  (TP 3,418 / FP 275)
+	- AP:          0.731
+	- recall:      0.734   (operating point: all detections)
+	- precision:   0.926
+	- recall @ total-FP budget:
+	       50 FP: 0.674
+	      100 FP: 0.704
+	      284 FP: 0.734
+	      500 FP: 0.734
+	     1000 FP: 0.734
+
+=== Comparison (same FDDB images, IoU>=0.50) ===
+detector                 AP  recall   prec  R@100FP
+---------------------------------------------------
+opencv:alt            0.681   0.697  0.878    0.552
+opencv:alt+box        0.731   0.734  0.926    0.704
+
+Total time: 00:00:22.67360115
+
+######################## 2b) FDDB WINDOW DIAGNOSTIC (folds=1: background FPR per window + per-stage rejection) ########################
+FDDB folds 1: 290 images, min-face 40px
+
+### weights/24/celeba_aligned__24_v2_s11_tuned.pkl  (pyramid=image)
+windows evaluated       30,299,258
+survive the cascade         26,925
+  of which background       13,639   (max IoU with GT < 0.2)
+background FPR/window     4.50e-04
+background per image          47.0   (before NMS)
+stage  stumps  rejected
+    1      30       98%
+    2      36       64%
+    3      25        8%
+    4      45       32%
+    5      47       15%
+    6     336       54%
+    7      95       11%
+    8     457       30%
+    9     522        4%
+   10    1025       14%
+   11    1200        9%
+
+### weights/24/opencv_default.pkl  (pyramid=image)
+windows evaluated       15,497,639
+survive the cascade          5,357
+  of which background          383   (max IoU with GT < 0.2)
+background FPR/window     2.47e-05
+background per image           1.3   (before NMS)
+stage  stumps  rejected
+    1       9       58%
+    2      16       51%
+    3      27       47%
+    4      32       43%
+    5      52       43%
+    6      53       38%
+    7      62       32%
+    8      72       33%
+    9      83       30%
+   10      91       39%
+   11      99       29%
+   12     115       24%
+   13     127       29%
+   14     135       20%
+   15     136       16%
+   16     137       15%
+   17     159       13%
+   18     155       12%
+   19     169       14%
+   20     196       10%
+   21     197       10%
+   22     181       10%
+   23     199        9%
+   24     211        7%
+   25     200        9%
+FDDB folds 1: 290 images, min-face 40px
+
+### weights/24/celeba_aligned__24_v2_s11_tuned.pkl  (pyramid=features)
+windows evaluated       30,797,716
+survive the cascade         62,003
+  of which background       47,841   (max IoU with GT < 0.2)
+background FPR/window     1.55e-03
+background per image         165.0   (before NMS)
+stage  stumps  rejected
+    1      30       94%
+    2      36       48%
+    3      25       11%
+    4      45       24%
+    5      47       13%
+    6     336       65%
+    7      95        9%
+    8     457       21%
+    9     522        6%
+   10    1025       33%
+   11    1200       33%
+
+######################## 3) OPENCV PATCH BASELINE (CBCL) ########################
+OpenCV 4.13.0
+Test set: 472 faces + 23,573 non-faces @ 24×24  (window fed to cascade: 24×24)
+
+[default] /opt/homebrew/anaconda3/lib/python3.13/site-packages/cv2/data/haarcascade_frontalface_default.xml
+	- true_positive: 0
+	- true_negative: 23,572
+	- false_positive: 1
+	- false_negative: 472
+	- accuracy: 0.980
+	- precision: 0.000
+	- recall: 0.000
+	- specifity: 1.000
+	- f1: 0.000
+	  NOTE: ~0 recall is expected, not a bug. OpenCV's cascade needs a context margin around the face; CBCL crops are too tight for its border Haar features to fire. Use the `detect` sub-command (full images) to compare OpenCV.
+
+[alt] /opt/homebrew/anaconda3/lib/python3.13/site-packages/cv2/data/haarcascade_frontalface_alt.xml
+	- true_positive: 0
+	- true_negative: 23,573
+	- false_positive: 0
+	- false_negative: 472
+	- accuracy: 0.980
+	- precision: 0.000
+	- recall: 0.000
+	- specifity: 1.000
+	- f1: 0.000
+	  NOTE: ~0 recall is expected, not a bug. OpenCV's cascade needs a context margin around the face; CBCL crops are too tight for its border Haar features to fire. Use the `detect` sub-command (full images) to compare OpenCV.
+
+[alt2] /opt/homebrew/anaconda3/lib/python3.13/site-packages/cv2/data/haarcascade_frontalface_alt2.xml
+	- true_positive: 0
+	- true_negative: 23,572
+	- false_positive: 1
+	- false_negative: 472
+	- accuracy: 0.980
+	- precision: 0.000
+	- recall: 0.000
+	- specifity: 1.000
+	- f1: 0.000
+	  NOTE: ~0 recall is expected, not a bug. OpenCV's cascade needs a context margin around the face; CBCL crops are too tight for its border Haar features to fire. Use the `detect` sub-command (full images) to compare OpenCV.
+
+=== Comparison (same CBCL test patches) ===
+cascade        F1  recall   prec   spec    acc
+----------------------------------------------
+default     0.000   0.000  0.000  1.000  0.980
+alt         0.000   0.000  0.000  1.000  0.980
+alt2        0.000   0.000  0.000  1.000  0.980
+
+Total time: 00:00:0.44595027
+
+######################## 4) NATIVE OPENCV PORT (build + parity) ########################
+Parsed /opt/homebrew/anaconda3/lib/python3.13/site-packages/cv2/data/haarcascade_frontalface_default.xml
+  window 24x24, 25 stages, 2913 stumps, 2913 features
+  parity vs cv2: 3472/3472 agree (100.00%), 0 differ
+  saved native cascade -> weights/24/opencv_default.pkl
+Parsed /opt/homebrew/anaconda3/lib/python3.13/site-packages/cv2/data/haarcascade_frontalface_alt.xml
+  window 20x20, 22 stages, 2135 stumps, 2135 features
+  parity vs cv2: 3471/3472 agree (99.97%), 1 differ
+  saved native cascade -> weights/20/opencv_alt.pkl
+
+######################## DONE -> /Users/salvacarrion/Documents/Programming/Python/viola-jones/results_reeval.txt ########################

@@ -18,7 +18,7 @@ A naive Viola-Jones (gather faces, mine random negatives, train 4 boosting stage
 | 6 | Same face fires at scales 1×, 1.5×, 2× → boxes on boxes after NMS         | Hybrid NMS: fuse if IoU > threshold **or** IoMin > 0.7         |
 | 7 | Hand-tuned `--layers` schedule rigid; first adaptive attempts collapsed   | Calibrated-threshold FPR+recall early-stop (`--target-stage-fpr`) |
 
-The sections below walk through each in detail. Independent of these, three classical V-J techniques are always on: **hard-negative mining**, **per-window variance normalization** ([weakclassifier.py](weakclassifier.py), §5.1 of the paper), and **held-out calibration of stage thresholds**.
+The sections below walk through each in detail. Independent of these, three classical V-J techniques are always on: **hard-negative mining**, **per-window variance normalization** ([weakclassifier.py](../weakclassifier.py), §5.1 of the paper), and **held-out calibration of stage thresholds**.
 
 ### 1. Negative-domain gap
 
@@ -33,7 +33,7 @@ The first attempt (FDDB faces with Caltech-only negatives) collapsed to F1=0.044
 
 The matched seed solved stage 1, but the next 8 stages mined from Caltech only. By stage 9, "Stage negatives: 947" appeared in the log: the cascade had memorised Caltech so completely that only 947 patches out of 1 M still passed it as faces. The cascade had drifted to "distinguish faces from Caltech-leftover-edges", and CBCL non-face patterns crept back in unchallenged.
 
-**Fix** ([violajones.py](violajones.py) `_mine_hard_negatives`): when a seed pool is passed, allocate **half** of each stage's mining budget to it and the other half to Caltech. CBCL non-faces stay in the training mix at every stage. Shortfalls backfill from Caltech. Logged as `[seed] mined X / [caltech] mined Y` per stage.
+**Fix** ([violajones.py](../violajones.py) `_mine_hard_negatives`): when a seed pool is passed, allocate **half** of each stage's mining budget to it and the other half to Caltech. CBCL non-faces stay in the training mix at every stage. Shortfalls backfill from Caltech. Logged as `[seed] mined X / [caltech] mined Y` per stage.
 
 ### 3. Pixel alignment at low resolution
 
@@ -47,21 +47,21 @@ At 19×19, **alignment matters at the pixel level**, not just pose. CBCL crops a
 
 CBCL ships only 1 929 unique faces in the HF train split. After augment+jitter that's ~7 700 train positives. Enough for an 11-stage cascade at 19×19, but limited by source diversity, the cascade overfits to CBCL's specific lighting and cropping style.
 
-**Fix** (`--face-source celeba_aligned+cbcl`): combine sources. With aligned CelebA, the alignment problem of § 3 is gone; we can mix freely. The multi-source run buys ~5 pp precision in raw scores (better hard-neg rejection) but only ~0.5 pp F1 after tuning, at 3.3× the compute cost, see [RESULTS.md](RESULTS.md#cbcl-vs-mixed-comparison). Worth it at 24×24, marginal at 19×19.
+**Fix** (`--face-source celeba_aligned+cbcl`): combine sources. With aligned CelebA, the alignment problem of § 3 is gone; we can mix freely. The multi-source run buys ~5 pp precision in raw scores (better hard-neg rejection) but only ~0.5 pp F1 after tuning, at 3.3× the compute cost, see [RESULTS.md](RESULTS.md#cbcl-vs-mixed-comparison-both-1919-both-f1-tuned). Worth it at 24×24, marginal at 19×19.
 
 ### 5. Calibration was hitting its own ceiling
 
-[adaboost.py](adaboost.py) `_calibrated_threshold()` historically capped per-stage threshold at `0.5` ("never tighten past majority vote"). At 24×24 with a deep cascade, val-pos scores cluster much higher than 0.5, calibration wanted to push deep stages to 0.6+ to match the val distribution and got clamped instead. The cap was leaving FPR points on the table.
+[adaboost.py](../adaboost.py) `_calibrated_threshold()` historically capped per-stage threshold at `0.5` ("never tighten past majority vote"). At 24×24 with a deep cascade, val-pos scores cluster much higher than 0.5, calibration wanted to push deep stages to 0.6+ to match the val distribution and got clamped instead. The cap was leaving FPR points on the table.
 
 That's also why post-hoc threshold tuning was so effective: the F1=0.357 cascade reached F1=0.653 just by allowing each stage's threshold to move past 0.5 to its actually-optimal point. No new training, no new features, just the cuts that calibration couldn't reach.
 
-**Fix**: raised the cap to 0.95 in [adaboost.py](adaboost.py); also added [tools/tune_thresholds.py](tools/tune_thresholds.py) as a cheap final-mile optimization (`--objective f1` for benchmark, `recall-at-spec` for "find every face" use cases).
+**Fix**: raised the cap to 0.95 in [adaboost.py](../adaboost.py); also added [tools/tune_thresholds.py](../tools/tune_thresholds.py) as a cheap final-mile optimization (`--objective f1` for benchmark, `recall-at-spec` for "find every face" use cases).
 
 ### 6. Hybrid NMS for multi-scale duplicates
 
 Sliding-window detection at growth=1.25 fires the same face at adjacent scales. A 24×24 box and a 30×30 box around the same face have IoU ≈ 0.64 (fuses fine), but a 24×24 box inside a 48×48 box has IoU ≈ 0.25, below the default 0.3 NMS threshold, so they don't fuse, producing "boxes on boxes" stacks.
 
-**Fix** ([utils.py](utils.py) `non_maximum_supression`, `--nms-metric hybrid`): fuse if **either** IoU > threshold **or** IoMin > 0.7, where IoMin = `intersection / min(area1, area2)`. IoMin is 1.0 for nested boxes regardless of scale ratio. The default `mode="weighted"` then merges the cluster into a single score-weighted-average box rather than dropping the smaller-scale detections.
+**Fix** ([utils.py](../utils.py) `non_maximum_supression`, `--nms-metric hybrid`): fuse if **either** IoU > threshold **or** IoMin > 0.7, where IoMin = `intersection / min(area1, area2)`. IoMin is 1.0 for nested boxes regardless of scale ratio. The default `mode="weighted"` then merges the cluster into a single score-weighted-average box rather than dropping the smaller-scale detections.
 
 ### 7. Adaptive cascade: calibrated FPR + recall
 
@@ -176,6 +176,26 @@ When the glob has no matches, `ls` exits with code 1. `2>/dev/null` only redirec
 
 **Lesson:** under `set -euo pipefail`, every shell glob that can match nothing needs `nullglob` or an explicit `|| true` clause.
 
+### B10. The sliding-window pyramid scaled the features instead of the image
+
+Found in the final post-mortem, after every model had been trained. `find_faces` built one integral image of the full-resolution photo and, at pyramid scale `s`, scaled every Haar rectangle by `s` with `int()` truncation. Two things then differ from training: the rectangles of one feature no longer have equal areas (a 4-px-wide pair at `s = 1.25` becomes 5 + 6 px), so the feature picks up a `Δarea · mean` brightness term the stump never saw; and the window is evaluated at full resolution, while every training patch was bilinearly downsized (smoother, lower std). On FDDB this let ~3.5× more background windows through the cascade (per-window FPR 1.55e-3 vs 4.5e-4), i.e. 165 instead of 47 false windows per image before NMS. The 19×19 models, whose base window is smaller, were hit even harder.
+
+**Fix:** `find_faces(pyramid="image")`, now the default: downsize the image by `s` with the same PIL bilinear filter used to build the training patches and run the native window, as OpenCV does. The old behaviour stays available as `pyramid="features"` to reproduce the pre-fix numbers. No retraining needed.
+
+**Why it went unnoticed:** the CBCL benchmark classifies 19×19/24×24 patches at scale 1, where both modes are identical. Every number the project optimised was blind to it; only the full-image FDDB benchmark exposed it.
+
+**Lesson:** inference geometry must equal training geometry. If a benchmark cannot exercise the inference path (here, the pyramid), it cannot validate it.
+
+### B11. The FDDB evaluation scored correct detections as false positives
+
+Not a detector bug but an evaluation one, and the largest single term in the OpenCV gap. Our positives are tight eyes-to-mouth crops (CBCL framing), so every detection box covers eyes to mouth. FDDB annotates an ellipse from forehead to chin; its bounding box is ~1.4× wider and ~2.1× taller than our box for the best model (up to 1.6× and 2.5× for the CBCL-only ones), with the centre ~22% of our box height higher. A perfectly centred detection therefore reaches IoU ≈ 0.3: it can never count at IoU ≥ 0.5 and is a coin flip at 0.3. Most of what looked like a "false-positive flood" on FDDB were correct detections drawn too small.
+
+**Fix:** `model.box_transform = (sw, sh, dcx, dcy)`, the median mapping from our box to the FDDB box, fitted on FDDB fold 1 and stored in each `.pkl` (`tools/eval_fddb.py --box-fit-folds 1 --save-box-transform`); `main.py detect` and the FDDB evaluation apply it after NMS. OpenCV gets the same treatment (its own fitted transform) so the comparison stays fair, and all reported numbers are on folds 2-10, disjoint from the fit.
+
+This also overturned a conclusion of the first FDDB analysis: raising `--detect-min-face` to 80 seemed to quadruple AP, but only because larger windows overlap FDDB's tall boxes more. With face boxes it lowers AP (folds 2-10, IoU 0.5: 0.47 → 0.32). Full numbers in [OPENCV_COMPARISON_FINDINGS.md](OPENCV_COMPARISON_FINDINGS.md).
+
+**Lesson:** a box-matching metric measures the box convention as much as the detector. Fit the convention on held-out data before comparing detectors trained on different crops.
+
 ---
 
 ## Architecture cleanup (2026-05-17)
@@ -214,7 +234,7 @@ Key benefits:
 
 ## Hard-negative mining as a separate tool
 
-Added [tools/mine_hard_negatives.py](tools/mine_hard_negatives.py) to pre-mine hard negatives from a trained cascade, save them to `weights/<res>/<weights-stem>__hardneg.npy`, and feed them into a subsequent training run via `main.py train --hard-neg-pool <path>`.
+Added [tools/mine_hard_negatives.py](../tools/mine_hard_negatives.py) to pre-mine hard negatives from a trained cascade, save them to `weights/<res>/<weights-stem>__hardneg.npy`, and feed them into a subsequent training run via `main.py train --hard-neg-pool <path>`.
 
 **Standalone tool, not integrated into prepare_data.** A hard-neg pool is a model-derived artifact, it changes every time the cascade that mined it changes. `prepare_data.py` outputs are meant to be deterministic from raw HF data + flags. Coupling the two would force a full data re-bundle every time the reference model changes (~30 min wasted per iteration). The standalone tool also puts model lineage in the filename (`cvj_weights_1778801054__hardneg.npy`), you can tell which cascade produced a given hard-neg pool just by looking at it.
 
@@ -313,6 +333,9 @@ The 19×19 work converged on a single prediction: move to 24×24 (~60K features 
 | H-flip augmentation                             | Marginal                                        | Symmetric Haar features partially already invariant to it        |
 | Positive curation (`--drop-low-score-pos`)      | +6 pp F1 on capacity-bound runs                 | Removes residual misaligned crops; doesn't fix the feature cap   |
 | Streaming raw very-hard mining                  | 15K hard negs at 0.0046% FPR (vs ~5K from pool) | No finite intermediate pool, scans HF raw until target reached  |
+| Image pyramid instead of scaled features (B10)  | FDDB background windows/window 1.55e-3 → 4.5e-4 | Inference geometry now equals training geometry                  |
+| Face-box mapping fitted on FDDB fold 1 (B11)    | FDDB AP@0.3 0.07 → 0.59, AP@0.5 0.00 → 0.47 (with B10) | Tight-crop boxes capped IoU at ≈0.3 for a perfect hit      |
+| `--detect-min-face 80` on FDDB                  | Looked like 4× AP; with face boxes, AP@0.5 0.47 → 0.32 | Artifact of the box convention (B11)                       |
 
 ---
 

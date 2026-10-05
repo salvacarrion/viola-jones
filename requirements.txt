@@ -2,3 +2,6 @@ numpy
 Pillow
 tqdm
 datasets
+# Only for the OpenCV baseline and the FDDB tools (tools/eval_fddb.py, baseline_opencv.py,
+# convert_opencv_cascade.py, draw_fddb_comparison.py). The detector itself does not use it.
+opencv-python

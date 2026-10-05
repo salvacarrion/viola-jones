@@ -51,6 +51,8 @@ class OpenCVCascade:
         self.base_scale = base_scale
         self.shift = shift
         self.source = source
+        # Face-box mapping, same contract as ViolaJones.box_transform.
+        self.box_transform = None
         # keep raw stages (picklable, simple) ...
         self.stages = stages
         # ... and a flattened, vectorization-friendly view per stage.
@@ -81,7 +83,7 @@ class OpenCVCascade:
             })
 
     # ---- core batched evaluation at the base window over a grid ----------
-    def _eval_grid(self, ii, ii2, ox, oy):
+    def _eval_grid(self, ii, ii2, ox, oy, stage_alive=None):
         """Run the full cascade at the BASE window for every origin (ox,oy).
 
         ii/ii2 are padded integral images (int64) of the (already scaled)
@@ -103,7 +105,7 @@ class OpenCVCascade:
 
         alive = np.arange(ox.size, dtype=np.int64)
         score = np.zeros(ox.size, dtype=np.float64)
-        for cs in self._cstages:
+        for k, cs in enumerate(self._cstages):
             if alive.size == 0:
                 break
             aox, aoy, anf = ox[alive], oy[alive], nf[alive]
@@ -127,6 +129,8 @@ class OpenCVCascade:
             passed = stage_sum >= cs["stage_threshold"]
             score[alive[passed]] += stage_sum[passed] - cs["stage_threshold"]
             alive = alive[passed]
+            if stage_alive is not None:
+                stage_alive[k] += alive.size
         return alive, score
 
     # ---- ViolaJones-compatible API --------------------------------------
@@ -145,9 +149,15 @@ class OpenCVCascade:
         return 1 if alive.size > 0 else 0
 
     def find_faces(self, pil_image, growth=None, min_shift=None,
-                   min_face_size=None, max_face_size=None, min_score=None):
+                   min_face_size=None, max_face_size=None, min_score=None,
+                   pyramid="image", stats=None):
         """Multi-scale detection. Returns (x1,y1,x2,y2,score) tuples in image
-        pixels (caller applies NMS, exactly like ViolaJones.find_faces)."""
+        pixels (caller applies NMS, exactly like ViolaJones.find_faces).
+        Always scales the image, as OpenCV does; `pyramid` exists only so
+        callers can pass the same kwargs to both model types. `stats`: see
+        ViolaJones.find_faces."""
+        if pyramid != "image":
+            raise ValueError("OpenCVCascade only supports pyramid='image'")
         w, h = self.base_width, self.base_height
         growth = self.base_scale if growth is None else growth
         step = self.shift if min_shift is None else min_shift
@@ -177,7 +187,13 @@ class OpenCVCascade:
             if ys.size and xs.size:
                 yy, xx = np.meshgrid(ys, xs, indexing="ij")
                 ox = xx.ravel(); oy = yy.ravel()
-                alive, score = self._eval_grid(ii, ii2, ox, oy)
+                stage_alive = None
+                if stats is not None:
+                    stats["windows"] = stats.get("windows", 0) + ox.size
+                    stage_alive = stats.setdefault(
+                        "stage_alive",
+                        np.zeros(len(self._cstages), dtype=np.int64))
+                alive, score = self._eval_grid(ii, ii2, ox, oy, stage_alive)
                 if alive.size:
                     sc = score[alive]
                     if min_score is not None:

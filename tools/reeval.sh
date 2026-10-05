@@ -13,25 +13,30 @@
 #
 # Everything is teed to results_reeval.txt — send that file back.
 #
+# FDDB protocol: each detector's box transform (its crop convention -> FDDB's
+# face box) is fitted on FIT_FOLDS and every metric is reported on the
+# disjoint FOLDS, both with raw boxes and with `+box` face boxes.
+#
 # Usage:
-#   tools/reeval.sh                     # FDDB fold 1 (fast: ~15-25 min total)
-#   tools/reeval.sh 1,2,3,4,5,6,7,8,9,10   # full FDDB (definitive headline; +hours for our models)
+#   tools/reeval.sh                     # FDDB folds 2-10, boxes fitted on fold 1 (~30 min)
+#   tools/reeval.sh 2                   # one held-out fold (fast smoke)
 #   DIAGNOSE=1 tools/reeval.sh          # also dump per-stage diagnose
 #   TUNE=1     tools/reeval.sh          # also regenerate the *_tuned.pkl files
 #
-# Env knobs: FOLDS overrides the positional arg; SKIP_FDDB=1 / SKIP_CBCL=1 to
-# skip a whole section.
+# Env knobs: FOLDS overrides the positional arg; FIT_FOLDS (default 1);
+# SKIP_FDDB=1 / SKIP_CBCL=1 to skip a whole section.
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT" || exit 1
 
-FOLDS="${1:-${FOLDS:-1}}"
+FOLDS="${1:-${FOLDS:-2,3,4,5,6,7,8,9,10}}"
+FIT_FOLDS="${FIT_FOLDS:-1}"
 RES="$ROOT/results_reeval.txt"
 
 {
-  echo "# Re-evaluation — $(date)"
+  echo "# Re-evaluation: $(LC_ALL=C date)"
   echo "# python : $(python --version 2>&1)"
-  echo "# fddb   : folds=$FOLDS"
+  echo "# fddb   : eval folds=$FOLDS, box transform fitted on folds=$FIT_FOLDS"
 } > "$RES"
 
 say()  { echo "$@" | tee -a "$RES"; }
@@ -66,34 +71,52 @@ if [ "${SKIP_CBCL:-0}" != "1" ]; then
 fi
 
 # ============================================================================
-# 2) FDDB in-the-wild benchmark   (NEW)
-#    Append more folds (arg) for the definitive headline numbers.
+# 2) FDDB in-the-wild benchmark
+#    Every run prints `<name>` (raw boxes) and `<name>+box` (face boxes,
+#    transform fitted on FIT_FOLDS) rows.
 # ============================================================================
 if [ "${SKIP_FDDB:-0}" != "1" ]; then
-  hdr "2) FDDB IN-THE-WILD  (folds=$FOLDS, IoU 0.3 & 0.5)"
+  hdr "2) FDDB IN-THE-WILD  (eval folds=$FOLDS, box fit folds=$FIT_FOLDS, IoU 0.3 & 0.5)"
+  FD=(--folds "$FOLDS" --box-fit-folds "$FIT_FOLDS" --iou 0.3,0.5)
 
-  say ""; say "### FDDB  ours=celeba_aligned__24_v2_s11_tuned (min-face=40)  +  cv2:default"
+  say ""; say "### FDDB  ours=celeba_aligned__24_v2_s11_tuned (pyramid=image)  +  cv2:default"
   runpy tools/eval_fddb.py --weights weights/24/celeba_aligned__24_v2_s11_tuned.pkl \
-        --cascade default --folds "$FOLDS" --iou 0.3,0.5
+        --cascade default "${FD[@]}"
 
-  say ""; say "### FDDB  ours=celeba_aligned__24_v2_s11_tuned (min-face=80, best op-point)"
+  say ""; say "### FDDB  ours=celeba_aligned__24_v2_s11_tuned (pyramid=features, LEGACY pre-fix inference)"
   runpy tools/eval_fddb.py --weights weights/24/celeba_aligned__24_v2_s11_tuned.pkl \
-        --skip-opencv --folds "$FOLDS" --min-face 80 --iou 0.3,0.5
+        --skip-opencv --pyramid features "${FD[@]}"
 
-  say ""; say "### FDDB  ours=celeba_aligned+cbcl__19_v2_tuned (best 19x19)"
-  runpy tools/eval_fddb.py --weights weights/19/celeba_aligned+cbcl__19_v2_tuned.pkl \
-        --skip-opencv --folds "$FOLDS" --iou 0.3,0.5
+  say ""; say "### FDDB  ours=celeba_aligned__24_v2_s11_tuned (min-face=80, sensitivity)"
+  runpy tools/eval_fddb.py --weights weights/24/celeba_aligned__24_v2_s11_tuned.pkl \
+        --skip-opencv --min-face 80 "${FD[@]}"
+
+  # Every other canonical model (tuned thresholds: on FDDB they beat the raw
+  # ones), for the per-model FDDB column of the README table.
+  for m in "${CANON_19[@]}" "${CANON_24[@]}"; do
+    [ "$m" = celeba_aligned__24_v2_s11 ] && continue
+    res="${m##*__}"; res="${res%%_*}"
+    f="weights/${res}/${m}_tuned.pkl"; [ -f "$f" ] || continue
+    say ""; say "### FDDB  ours=${m}_tuned"
+    runpy tools/eval_fddb.py --weights "$f" --skip-opencv "${FD[@]}"
+  done
 
   say ""; say "### FDDB  native port  weights/24/opencv_default.pkl"
   if [ -f weights/24/opencv_default.pkl ]; then
     runpy tools/eval_fddb.py --weights weights/24/opencv_default.pkl \
-          --skip-opencv --folds "$FOLDS" --iou 0.3,0.5
+          --skip-opencv "${FD[@]}"
   else
-    say "  (skipped — run section 4 first to build it)"
+    say "  (skipped: run section 4 first to build it)"
   fi
 
   say ""; say "### FDDB  cv2:alt (reference)"
-  runpy tools/eval_fddb.py --skip-ours --cascade alt --folds "$FOLDS" --iou 0.3,0.5
+  runpy tools/eval_fddb.py --skip-ours --cascade alt "${FD[@]}"
+
+  hdr "2b) FDDB WINDOW DIAGNOSTIC (folds=$FIT_FOLDS: background FPR per window + per-stage rejection)"
+  runpy tools/diagnose_fddb_windows.py --folds "$FIT_FOLDS" \
+        --weights weights/24/celeba_aligned__24_v2_s11_tuned.pkl weights/24/opencv_default.pkl
+  runpy tools/diagnose_fddb_windows.py --folds "$FIT_FOLDS" --pyramid features \
+        --weights weights/24/celeba_aligned__24_v2_s11_tuned.pkl
 fi
 
 # ============================================================================

@@ -2,6 +2,7 @@ import os
 import pickle
 import time
 import numpy as np
+from PIL import Image
 from utils import *
 from tqdm.auto import tqdm
 
@@ -23,6 +24,10 @@ class ViolaJones:
         # actual training data shape so the saved checkpoint is self-describing.
         self.base_width = self.base_height = base_size
         self.base_scale, self.shift = 1.25, 2
+        # (sw, sh, dcx, dcy) mapping the training window to a face box in a
+        # benchmark's annotation convention (see utils.apply_box_transform).
+        # Fitted after training by `tools/eval_fddb.py --save-box-transform`.
+        self.box_transform = None
         self.features_path = features_path
         # Per-stage face-recall target used to calibrate each AdaBoost layer
         # after training. 0.99 ≈ paper-style; cumulative recall ≈ layer_recall^N.
@@ -466,23 +471,33 @@ class ViolaJones:
 
     def find_faces(self, pil_image, growth=None, min_shift=None,
                    min_face_size=None, max_face_size=None,
-                   min_score=None):
+                   min_score=None, pyramid="image", stats=None):
         """
         Multi-scale sliding-window detection on a PIL image.
 
-        Strategy (paper §5) — fully vectorized cascade per scale:
-          - One padded integral image + one squared II for the WHOLE image.
-          - At each scale we form the grid of window origins (x1, y1) and
-            evaluate every cascade stage as a batched NumPy reduction over
-            *all* surviving windows. Stage k sees only windows that passed
-            stage k-1, preserving the per-window early-exit cascade without
-            any Python-level per-window dispatch. The inner work is 4
-            fancy-indexed array reads per Haar rectangle, so we replace
-            millions of scalar Python lookups with a handful of vectorized
-            ones — ~20-50× faster than the old per-window loop.
-          - Window shift grows with scale: at scale s we step `max(1, s)`
-            pixels. Stepping 2px at scale 8 just produces near-duplicate
-            detections that NMS later collapses anyway.
+        Two ways to build the scale pyramid (`pyramid`):
+          - "image" (default, what OpenCV does): at scale s the image is
+            downsized by s (PIL bilinear, the same filter `prepare_data.py`
+            used to build the training patches) and the cascade runs on the
+            native base_width × base_height window, i.e. exactly the geometry
+            it was trained on. Window origins step `max(1, round(min_shift/s))`
+            pixels in the resized image, ≈ max(min_shift, s) in the original.
+          - "features" (legacy): the image stays at full resolution and every
+            Haar rectangle is scaled by s instead. Rect corners are truncated
+            to ints, so the rectangles of one feature end up with unequal
+            areas and pick up a mean-brightness term the trained stump never
+            saw, and the window is evaluated at a finer resolution than the
+            training patches. On FDDB this mode lets ~3.5× more background
+            windows through. Kept only to reproduce the pre-fix numbers (see
+            docs/OPENCV_COMPARISON_FINDINGS.md).
+
+        Patch-level `classify` (the CBCL benchmark) runs at scale 1 and is
+        identical in both modes.
+
+        In both modes each pyramid level runs the whole cascade as a batched
+        NumPy reduction over the surviving windows (see `_run_cascade`):
+        stage k only sees windows that passed stage k-1, with no per-window
+        Python dispatch.
 
         Args:
             min_face_size: smallest detectable face in image pixels. Skips
@@ -495,9 +510,16 @@ class ViolaJones:
                 (the `score` field — see Returns) falls below this value.
                 None disables filtering. Typical useful range is 0.05–0.5
                 for a 10–15 stage cascade; higher values filter aggressively.
+            pyramid: "image" (default) or "features" (legacy), see above.
+            stats: optional dict for diagnostics; accumulates "windows"
+                (windows evaluated) and "stage_alive" (per-stage count of
+                windows still alive after that stage) across calls.
 
         Returns:
             list of (x1, y1, x2, y2, score) tuples in image coordinates.
+            Boxes are the *training window* (a tight eyes-to-mouth crop for
+            every model in this repo); after NMS, map them to face boxes with
+            `utils.apply_box_transform(regions, self.box_transform)`.
             `score` is the sum of per-stage AdaBoost margins
             (`vote − layer_threshold`, where `vote = Σαᵢ·hᵢ(x)/Σαᵢ`)
             accumulated across every stage the window passed. A confident
@@ -507,6 +529,8 @@ class ViolaJones:
             `non_maximum_supression` uses to weight the cluster centroid
             and to pick the representative in greedy mode.
         """
+        if pyramid not in ("image", "features"):
+            raise ValueError(f"pyramid must be 'image' or 'features', got {pyramid!r}")
         w, h = self.base_width, self.base_height
         if growth is None:
             growth = self.base_scale
@@ -514,16 +538,17 @@ class ViolaJones:
             min_shift = self.shift
 
         pil_image = pil_image.convert('L')
-        image = np.array(pil_image)
-        img_h, img_w = image.shape
+        img_w, img_h = pil_image.size
         if img_h < h or img_w < w:
             return []
 
-        # Single-shot integral images for the entire image. Cast to int64
-        # up front so all the rect-sum subtractions stay in signed
-        # arithmetic without per-window casts.
-        ii = integral_image(image).astype(np.int64)
-        ii2 = integral_image_pow2(image).astype(np.int64)
+        if pyramid == "features":
+            # Single-shot integral images for the entire image. Cast to int64
+            # up front so all the rect-sum subtractions stay in signed
+            # arithmetic without per-window casts.
+            image = np.array(pil_image)
+            ii_full = integral_image(image).astype(np.int64)
+            ii2_full = integral_image_pow2(image).astype(np.int64)
 
         # Resolve scale bounds from face-size limits. base_width is the
         # floor — smaller windows can't match the learned features.
@@ -547,67 +572,45 @@ class ViolaJones:
         while int(w * scale) <= img_w and int(h * scale) <= img_h:
             if max_scale is not None and scale > max_scale:
                 break
-            win_w = int(w * scale)
-            win_h = int(h * scale)
-            shift = max(min_shift, int(scale))
+            if pyramid == "image":
+                grid_w = max(w, int(round(img_w / scale)))
+                grid_h = max(h, int(round(img_h / scale)))
+                small = np.asarray(pil_image.resize((grid_w, grid_h), Image.BILINEAR))
+                ii = integral_image(small).astype(np.int64)
+                ii2 = integral_image_pow2(small).astype(np.int64)
+                win_w, win_h, feat_scale = w, h, 1.0
+                shift = max(1, int(round(min_shift / scale)))
+                sx, sy = img_w / grid_w, img_h / grid_h
+            else:
+                ii, ii2 = ii_full, ii2_full
+                grid_w, grid_h = img_w, img_h
+                win_w, win_h, feat_scale = int(w * scale), int(h * scale), scale
+                # Window shift grows with scale: stepping 2px at scale 8 just
+                # produces near-duplicate detections that NMS collapses anyway.
+                shift = max(min_shift, int(scale))
+                sx = sy = 1.0
 
-            ys = np.arange(0, img_h - win_h + 1, shift, dtype=np.int64)
-            xs = np.arange(0, img_w - win_w + 1, shift, dtype=np.int64)
-            if ys.size == 0 or xs.size == 0:
-                scale *= growth
-                continue
-            yy, xx = np.meshgrid(ys, xs, indexing='ij')
-            x1 = xx.ravel()
-            y1 = yy.ravel()
-            x2 = x1 + win_w
-            y2 = y1 + win_h
-
-            # Per-window pixel std via the full-image IIs (vectorized).
-            area = float(win_w * win_h)
-            sum_x = ii[y2, x2] - ii[y1, x2] - ii[y2, x1] + ii[y1, x1]
-            sum_x2 = ii2[y2, x2] - ii2[y1, x2] - ii2[y2, x1] + ii2[y1, x1]
-            mean = sum_x / area
-            var = sum_x2 / area - mean * mean
-            std = np.sqrt(np.maximum(var, 0.0))
-            std = np.where(std >= 1.0, std, 1.0)
-
-            # Cascade: filter the alive index set stage by stage, and
-            # accumulate the per-stage margin (vote − layer_thr) as a
-            # continuous confidence score per surviving window.
-            alive = np.arange(x1.size, dtype=np.int64)
-            margin_sum = np.zeros(x1.size, dtype=np.float64)
-            s2 = scale * scale
-            for alphas, sum_alpha, layer_thr, wcs in stages:
-                if alive.size == 0 or sum_alpha <= 0.0:
-                    break
-                ox = x1[alive]
-                oy = y1[alive]
-                std_a = std[alive]
-                total = np.zeros(alive.size, dtype=np.float64)
-                for alpha, wc in zip(alphas, wcs):
-                    fv = self._batch_haar_value(wc.haar_feature, ii,
-                                                scale, ox, oy)
-                    thr_scaled = wc.threshold * s2 * std_a
-                    pol = wc.polarity
-                    pred = pol * fv < pol * thr_scaled
-                    total += alpha * pred
-                vote = total / sum_alpha
-                passed = vote >= layer_thr
-                margin_sum[alive[passed]] += vote[passed] - layer_thr
-                alive = alive[passed]
-
-            if alive.size:
-                if min_score is not None:
-                    keep = margin_sum[alive] >= float(min_score)
-                    alive = alive[keep]
-            if alive.size:
-                xs1 = x1[alive].tolist()
-                ys1 = y1[alive].tolist()
-                xs2 = x2[alive].tolist()
-                ys2 = y2[alive].tolist()
-                scs = margin_sum[alive].tolist()
-                regions.extend((xs1[i], ys1[i], xs2[i], ys2[i], scs[i])
-                               for i in range(alive.size))
+            ys = np.arange(0, grid_h - win_h + 1, shift, dtype=np.int64)
+            xs = np.arange(0, grid_w - win_w + 1, shift, dtype=np.int64)
+            if ys.size and xs.size:
+                yy, xx = np.meshgrid(ys, xs, indexing='ij')
+                x1 = xx.ravel()
+                y1 = yy.ravel()
+                stage_alive = None
+                if stats is not None:
+                    stats["windows"] = stats.get("windows", 0) + x1.size
+                    stage_alive = stats.setdefault(
+                        "stage_alive", np.zeros(len(stages), dtype=np.int64))
+                alive, margin_sum = self._run_cascade(
+                    ii, ii2, x1, y1, win_w, win_h, feat_scale, stages,
+                    stage_alive)
+                if alive.size and min_score is not None:
+                    alive = alive[margin_sum[alive] >= float(min_score)]
+                for a in alive.tolist():
+                    regions.append((float(x1[a] * sx), float(y1[a] * sy),
+                                    float((x1[a] + win_w) * sx),
+                                    float((y1[a] + win_h) * sy),
+                                    float(margin_sum[a])))
 
             pbar.set_postfix(scale='{:.2f}'.format(scale),
                              detections=len(regions))
@@ -615,6 +618,51 @@ class ViolaJones:
             scale *= growth
         pbar.close()
         return regions
+
+    def _run_cascade(self, ii, ii2, x1, y1, win_w, win_h, scale, stages,
+                     stage_alive=None):
+        """Run every stage over the windows with origins (x1, y1) of one
+        pyramid level, filtering the alive index set stage by stage.
+
+        Returns (alive, margin_sum): indices of the windows that passed every
+        stage, and the per-window accumulated margin (vote − layer_thr) used
+        as the detection score. If `stage_alive` (int array, one slot per
+        stage) is given, the survivor count after each stage is added to it.
+        """
+        # Per-window pixel std via the IIs (variance normalization, §5.1).
+        area = float(win_w * win_h)
+        x2 = x1 + win_w
+        y2 = y1 + win_h
+        sum_x = ii[y2, x2] - ii[y1, x2] - ii[y2, x1] + ii[y1, x1]
+        sum_x2 = ii2[y2, x2] - ii2[y1, x2] - ii2[y2, x1] + ii2[y1, x1]
+        mean = sum_x / area
+        var = sum_x2 / area - mean * mean
+        std = np.sqrt(np.maximum(var, 0.0))
+        std = np.where(std >= 1.0, std, 1.0)
+
+        alive = np.arange(x1.size, dtype=np.int64)
+        margin_sum = np.zeros(x1.size, dtype=np.float64)
+        s2 = scale * scale
+        for k, (alphas, sum_alpha, layer_thr, wcs) in enumerate(stages):
+            if alive.size == 0 or sum_alpha <= 0.0:
+                break
+            ox = x1[alive]
+            oy = y1[alive]
+            std_a = std[alive]
+            total = np.zeros(alive.size, dtype=np.float64)
+            for alpha, wc in zip(alphas, wcs):
+                fv = self._batch_haar_value(wc.haar_feature, ii, scale, ox, oy)
+                thr_scaled = wc.threshold * s2 * std_a
+                pol = wc.polarity
+                pred = pol * fv < pol * thr_scaled
+                total += alpha * pred
+            vote = total / sum_alpha
+            passed = vote >= layer_thr
+            margin_sum[alive[passed]] += vote[passed] - layer_thr
+            alive = alive[passed]
+            if stage_alive is not None:
+                stage_alive[k] += alive.size
+        return alive, margin_sum
 
     @staticmethod
     def _batch_haar_value(haar, ii, scale, ox, oy):

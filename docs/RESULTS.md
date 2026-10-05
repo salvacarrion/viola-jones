@@ -1,6 +1,6 @@
 # Viola-Jones: Experimental Results
 
-Detailed metrics for every training run, in chronological order. All numbers are on the **CBCL benchmark test split**: 472 faces / 23 573 non-faces.
+Detailed metrics for every training run, in chronological order. All numbers are on the **CBCL benchmark test split**: 472 faces / 23 573 non-faces. In-the-wild numbers for every model (FDDB) are in [OPENCV_COMPARISON_FINDINGS.md](OPENCV_COMPARISON_FINDINGS.md#per-model-folds-2-10-face-boxes-tuned-thresholds).
 
 ## Summary
 
@@ -10,12 +10,12 @@ Detailed metrics for every training run, in chronological order. All numbers are
 | `weights/19/celeba_aligned+cbcl__19_v2_tuned.pkl`         |   19×19    | CelebA<sub>aligned</sub>+CBCL, F1-tuned |   16   | 0.625  | 0.995 | **0.661** |
 | `weights/24/cbcl__24_smoke_tuned.pkl`                     |   24×24    | CBCL (adaptive trainer), F1-tuned       |   10   | 0.602  | 0.996 | **0.660** |
 | `weights/19/cbcl__19_v2_tuned.pkl`                        |   19×19    | CBCL, F1-tuned                          |   15   | 0.606  | 0.995 | **0.658** |
-| `weights/24/cvj_weights_1777843525_tuned.pkl`             |   24×24    | CBCL (historical fixed-layers), F1-tuned |   9    | 0.597  | 0.995 | **0.653** |
+| `cvj_weights_1777843525_tuned.pkl` (not shipped)          |   24×24    | CBCL (historical fixed-layers), F1-tuned |   9    | 0.597  | 0.995 | **0.653** |
 | `weights/19/celeba_aligned+cbcl__19_v1_tuned.pkl`         |   19×19    | CelebA<sub>aligned</sub>+CBCL, F1-tuned |   11   | 0.614  | 0.994 |   0.639   |
 | `weights/19/cbcl__19_v1_tuned.pkl`                        |   19×19    | CBCL, F1-tuned                          |   11   | 0.583  | 0.995 |   0.634   |
 | `weights/19/celeba_aligned_filtered__19_v1_tuned.pkl`     |   19×19    | CelebA<sub>aligned</sub> (filtered drop 0.61), F1-tuned | 3 | 0.504  | 0.997 |   0.603   |
 
-The **24×24 CelebA-only v2 (11 stages, ⭐)** is the project's recommended detector: it ties the best benchmark F1 (0.661, level with mixed 19×19 v2) *and* is the most real-image-robust, since it trains on CelebA's pose/lighting diversity at full 24×24 resolution rather than upscaled 19×19 CBCL crops. The benchmark F1 understates it, the test set *is* CBCL, which this model never trains on (only CBCL non-faces as the negative seed). See the [24×24 CelebA section](#2424--celebaaligned-only-9-stages-156-h--the-resolution-hypothesis-confirmed) for the full deepening story.
+The **24×24 CelebA-only v2 (11 stages, ⭐)** is the project's recommended detector: it ties the best benchmark F1 (0.661, level with mixed 19×19 v2) *and* is the most real-image-robust, since it trains on CelebA's pose/lighting diversity at full 24×24 resolution rather than upscaled 19×19 CBCL crops. The benchmark F1 understates it, the test set *is* CBCL, which this model never trains on (only CBCL non-faces as the negative seed). See the [24×24 CelebA section](#2424-celebaaligned-only-9-stages-156-h-the-resolution-hypothesis-confirmed) for the full deepening story.
 
 ## Shared hyperparameters (19×19 runs)
 
@@ -45,7 +45,7 @@ T per stage:        [8, 10, 27, 39, 45, 61, 69, 154, 220, 311, 400]
 Layer thresholds:   [0.257, 0.319, 0.378, 0.413, 0.428, 0.434, 0.445, 0.459, 0.466, 0.472, 0.473]
 ```
 
-Stage 11 hit the `max_wcs_per_stage=400` cap with `final_fpr=0.599 > target 0.5`, the capacity-ceiling break (see [FINDINGS.md](FINDINGS.md#bug-7-fixed-cascade-saturation-cap)) fired cleanly.
+Stage 11 hit the `max_wcs_per_stage=400` cap with `final_fpr=0.599 > target 0.5`, the capacity-ceiling break (see [FINDINGS.md](FINDINGS.md#7-adaptive-cascade-calibrated-fpr--recall)) fired cleanly.
 
 **Test metrics (raw):**
 
@@ -383,7 +383,7 @@ Cumulative val recall stayed flat at 0.958 across all four stages, **recall is n
 
 **Data:** `--face-source cbcl --resolution 24 --augment --jitter 2`.
 **Cascade:** 9 stages, fixed `--layers 5 10 20 40 60 80 100 150 200 250` (855 WCs total).
-**Weights:** `weights/24/cvj_weights_1777843525.pkl`.
+**Weights:** `weights/24/cvj_weights_1777843525.pkl` (not shipped in the repo).
 
 | Threshold mode                                  | Recall | Spec  | Precision |    F1     | Train time |
 | ----------------------------------------------- | :----: | :---: | :-------: | :-------: | :--------: |
@@ -391,13 +391,15 @@ Cumulative val recall stayed flat at 0.958 across all four stages, **recall is n
 | post-hoc `--objective recall-at-spec --min-spec 0.97` | 0.636  | 0.971 |   0.309   |   0.416   |   +1 min   |
 | post-hoc `--objective f1`                       | 0.597  | 0.995 |   0.719   | **0.653** |   +1 min   |
 
-The +0.296 F1 lift from tuning (0.357 → 0.653) is the headline number that motivated raising the calibration cap from 0.5 to 0.95 in `adaboost.py`, see [FINDINGS.md](FINDINGS.md#bug-2-calibration-05-cap-suppressed-deep-stage-thresholds).
+The +0.296 F1 lift from tuning (0.357 → 0.653) is the headline number that motivated raising the calibration cap from 0.5 to 0.95 in `adaboost.py`, see [FINDINGS.md](FINDINGS.md#5-calibration-was-hitting-its-own-ceiling).
 
-This run was the project's best F1 for a long time but uses the *old* fixed-layers trainer and pre-bug-fix calibration. The pending 24×24 reruns (TBD in the README table) will redo this with the adaptive trainer + post-fix calibration.
+This run was the project's best F1 for a long time but uses the *old* fixed-layers trainer and pre-bug-fix calibration. It was superseded by the adaptive-trainer 24×24 runs above (CBCL smoke, CelebA v1/v2).
 
 ---
 
-## Pending experiments
+## Experiments not run
+
+Open when the repo was archived; kept for whoever picks it up (see also [RETRAINING.md](RETRAINING.md)).
 
 | Experiment                              | Hypothesis                                                                                  |
 | --------------------------------------- | ------------------------------------------------------------------------------------------- |

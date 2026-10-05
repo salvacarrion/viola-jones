@@ -16,9 +16,15 @@ and reports, per detector:
 
 Protocol notes / honest caveats:
   * GT ellipses are converted to their axis-aligned bounding boxes. FDDB
-    ellipses include forehead+chin, so they run a bit taller than a typical
+    ellipses include forehead+chin, so they run taller than a typical
     detector box; IoU>=0.5 against the bbox is a standard, slightly strict
     simplification of the official ellipse eval. Tune with --iou.
+  * Box convention. Every detector's box follows the crop convention it was
+    trained on (ours: tight eyes-to-mouth crops, ~1.4x narrower and ~2.1x
+    shorter than the FDDB box, so even a perfect hit scores IoU ~0.33).
+    --box-fit-folds fits one (sw, sh, dcx, dcy) transform per detector on
+    held-out folds and reports `<name>+box` rows next to the raw ones, for
+    ours AND for OpenCV, so neither gets a box-shape handicap.
   * OpenCV detections come from detectMultiScale3 (confidence = stage
     levelWeight). --min-neighbors prunes the low-confidence tail before we
     see it, so it truncates the high-recall end of OpenCV's curve — lower it
@@ -26,7 +32,8 @@ Protocol notes / honest caveats:
   * Different training data is the point of a baseline, not a flaw: both
     detectors are scored identically on the same images.
 
-Data layout (produced by extracting the HF mirror tarballs):
+Data layout (produced by extracting the HF mirror tarballs; download commands
+in docs/OPENCV_COMPARISON_FINDINGS.md, "Data provenance"):
     data/fddb/originalPics/<year>/...           # images
     data/fddb/FDDB-folds/FDDB-fold-NN-ellipseList.txt
 
@@ -35,16 +42,23 @@ Usage:
     python tools/eval_fddb.py --weights weights/24/<model>.pkl \
         --cascade default --folds 1 --max-images 40
 
-    # full fold 1 (~284 images)
-    python tools/eval_fddb.py --weights weights/24/<model>.pkl --cascade default --folds 1
+    # fit + store the model's box transform on fold 1 (draw face boxes in detect)
+    python tools/eval_fddb.py --weights weights/24/<model>.pkl --skip-opencv \
+        --folds 1 --box-fit-folds 1 --save-box-transform
+
+    # headline: fit boxes on fold 1, evaluate on the 9 held-out folds
+    python tools/eval_fddb.py --weights weights/24/<model>.pkl --cascade default \
+        --box-fit-folds 1 --folds 2,3,4,5,6,7,8,9,10 --iou 0.3,0.5
 """
 
 import argparse
 import glob
 import math
 import os
+import pickle
 import sys
 import time
+from multiprocessing import Pool
 
 import cv2
 import numpy as np
@@ -52,7 +66,8 @@ from PIL import Image
 from tqdm.auto import tqdm
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from utils import non_maximum_supression, get_pretty_time  # noqa: E402
+from utils import (apply_box_transform, get_pretty_time,  # noqa: E402
+                   non_maximum_supression)
 from violajones import ViolaJones  # noqa: E402
 from main import pick_weights  # noqa: E402
 
@@ -204,24 +219,74 @@ def compute_metrics(per_image, n_gt, fp_budgets):
 
 
 # ----------------------------------------------------------------------------
+# Box convention
+# ----------------------------------------------------------------------------
+def fit_box_transform(det_lists, samples, min_iou=0.2):
+    """Fit the (sw, sh, dcx, dcy) that maps a detector's boxes onto FDDB's
+    (ellipse-bbox) convention: the per-coordinate median over every detection
+    whose best-overlapping GT box has IoU >= `min_iou`. 0.2 keeps
+    well-centred detections whose box is merely too small: a tight-crop
+    window centred on a face only reaches IoU ≈ 0.3. Medians make the fit
+    robust to the few wrong matches. Returns None if nothing matched."""
+    sw, sh, dx, dy = [], [], [], []
+    for (_, gts), dets in zip(samples, det_lists):
+        for d in dets:
+            if not gts:
+                continue
+            g = max(gts, key=lambda gt: iou(d[:4], gt))
+            if iou(d[:4], g) < min_iou:
+                continue
+            w, h = d[2] - d[0], d[3] - d[1]
+            sw.append((g[2] - g[0]) / w)
+            sh.append((g[3] - g[1]) / h)
+            dx.append(((g[0] + g[2]) / 2 - (d[0] + d[2]) / 2) / w)
+            dy.append(((g[1] + g[3]) / 2 - (d[1] + d[3]) / 2) / h)
+    if not sw:
+        return None
+    return tuple(round(float(np.median(v)), 4) for v in (sw, sh, dx, dy))
+
+
+# ----------------------------------------------------------------------------
 # Detectors → {image_path: [(x1,y1,x2,y2,score), ...]}
 # ----------------------------------------------------------------------------
-def run_ours(clf, samples, min_face, max_face, nms_thr):
-    out = []
-    for img_path, _ in tqdm(samples, desc="ours", unit="img"):
-        try:
-            pil = Image.open(img_path)
-        except FileNotFoundError:
-            out.append([])
-            continue
-        regions = clf.find_faces(pil, min_face_size=min_face,
-                                 max_face_size=max_face)
-        if regions:
-            regions = non_maximum_supression(regions, threshold=nms_thr,
-                                              mode="weighted", metric="hybrid")
-            regions = [tuple(float(v) for v in r) for r in regions]
-        out.append(list(regions))
-    return out
+_OURS = {}
+
+
+def _ours_init(wpath, kwargs):
+    _OURS["clf"] = ViolaJones.load(wpath)
+    _OURS["kw"] = kwargs
+
+
+def _ours_detect(img_path):
+    """Raw-window detections after NMS for one image (box_transform is applied
+    later, so raw and face-box metrics come from the same detection pass)."""
+    kw = _OURS["kw"]
+    try:
+        pil = Image.open(img_path)
+    except FileNotFoundError:
+        return []
+    regions = _OURS["clf"].find_faces(pil, min_face_size=kw["min_face"],
+                                      max_face_size=kw["max_face"],
+                                      pyramid=kw["pyramid"])
+    if not regions:
+        return []
+    regions = non_maximum_supression(regions, threshold=kw["nms_thr"],
+                                     mode="weighted", metric="hybrid")
+    return [tuple(float(v) for v in r) for r in regions]
+
+
+def run_ours(wpath, samples, min_face, max_face, nms_thr, pyramid="image",
+             workers=1):
+    kw = {"min_face": min_face, "max_face": max_face, "nms_thr": nms_thr,
+          "pyramid": pyramid}
+    paths = [p for p, _ in samples]
+    if workers <= 1:
+        _ours_init(wpath, kw)
+        return [_ours_detect(p) for p in tqdm(paths, desc="ours", unit="img")]
+    # One process per core: detection is pure NumPy and image-parallel.
+    with Pool(workers, initializer=_ours_init, initargs=(wpath, kw)) as pool:
+        return list(tqdm(pool.imap(_ours_detect, paths, chunksize=4),
+                         total=len(paths), desc="ours", unit="img"))
 
 
 def run_opencv(cascade, samples, scale_factor, min_neighbors, min_face):
@@ -264,6 +329,10 @@ def evaluate_detector(name, det_lists, samples, iou_thr, fp_budgets):
     return m, n_gt
 
 
+def parse_folds(s):
+    return [int(x) for x in str(s).split(",") if x.strip()]
+
+
 def main():
     ap = argparse.ArgumentParser(description="FDDB eval: our VJ vs OpenCV")
     ap.add_argument("--fddb-dir", default="data/fddb")
@@ -284,6 +353,21 @@ def main():
     ap.add_argument("--max-face", type=int, default=0,
                     help="largest face in px for ours (0 = unbounded)")
     ap.add_argument("--nms-threshold", type=float, default=0.3)
+    ap.add_argument("--pyramid", choices=["image", "features"], default="image",
+                    help="our scale pyramid (see ViolaJones.find_faces); "
+                         "'features' reproduces the pre-fix numbers")
+    ap.add_argument("--workers", type=int, default=min(8, os.cpu_count() or 1),
+                    help="processes for our detector (default: min(8, cores))")
+    ap.add_argument("--box-fit-folds", default="",
+                    help="fit each detector's box transform (FDDB box "
+                         "convention) on these folds, e.g. '1', and report "
+                         "raw + face-box metrics on --folds. Keep them "
+                         "disjoint from --folds. Without it, ours uses the "
+                         "box_transform stored in the .pkl (if any)")
+    ap.add_argument("--save-box-transform", action="store_true",
+                    help="write our fitted box transform into the --weights "
+                         ".pkl (requires --box-fit-folds); main.py detect "
+                         "then draws face boxes")
     ap.add_argument("--scale-factor", type=float, default=1.1,
                     help="OpenCV pyramid step (default: 1.1)")
     ap.add_argument("--min-neighbors", type=int, default=2,
@@ -292,49 +376,93 @@ def main():
     ap.add_argument("--skip-opencv", action="store_true")
     args = ap.parse_args()
 
-    folds = [int(x) for x in args.folds.split(",") if x.strip()]
+    folds = parse_folds(args.folds)
+    fit_folds = parse_folds(args.box_fit_folds)
+    if args.save_box_transform and not fit_folds:
+        ap.error("--save-box-transform requires --box-fit-folds")
+    if set(folds) & set(fit_folds):
+        print(f"WARNING: box-fit folds {fit_folds} overlap eval folds {folds}: "
+              f"face-box metrics are in-sample")
     iou_thrs = [float(x) for x in str(args.iou).split(",") if x.strip()]
     samples = load_fddb(args.fddb_dir, folds)
     if args.max_images > 0:
         samples = samples[:args.max_images]
+    fit_samples = load_fddb(args.fddb_dir, fit_folds) if fit_folds else []
     n_gt_total = sum(len(g) for _, g in samples)
     print(f"FDDB: {len(samples):,} images, {n_gt_total:,} GT faces "
           f"(folds {folds})  |  IoU>={iou_thrs}  min-face={args.min_face}px")
+    if fit_folds:
+        print(f"Box transform fitted on folds {fit_folds} "
+              f"({len(fit_samples):,} images, disjoint from eval)")
 
     fp_budgets = [50, 100, 284, 500, 1000]
     max_face = args.max_face if args.max_face > 0 else None
 
-    # Detection (the expensive part) runs ONCE per detector; metrics are then
-    # recomputed cheaply at every IoU threshold.
-    det_lists = {}
+    # Detection (the expensive part) runs ONCE per detector and fold set;
+    # metrics are then recomputed cheaply at every IoU threshold, with and
+    # without the box transform.
+    detectors = {}   # name -> (run(samples) -> det_lists, stored transform)
+    wpath = clf = None
     if not args.skip_ours:
         wpath = pick_weights(args.weights)
-        print(f"\nOur cascade: {wpath}")
         clf = ViolaJones.load(wpath)
-        det_lists["ours"] = run_ours(clf, samples, args.min_face, max_face,
-                                     args.nms_threshold)
+        print(f"\nOur cascade: {wpath}  (pyramid={args.pyramid})")
+        detectors["ours"] = (
+            lambda s: run_ours(wpath, s, args.min_face, max_face,
+                               args.nms_threshold, args.pyramid, args.workers),
+            getattr(clf, "box_transform", None))
     if not args.skip_opencv:
         fname = f"haarcascade_frontalface_{args.cascade}.xml"
         cpath = os.path.join(cv2.data.haarcascades, fname)
         cascade = cv2.CascadeClassifier(cpath)
         print(f"\nOpenCV cascade ({cv2.__version__}): {cpath}")
-        det_lists[f"opencv:{args.cascade}"] = run_opencv(
-            cascade, samples, args.scale_factor, args.min_neighbors,
-            args.min_face)
+        detectors[f"opencv:{args.cascade}"] = (
+            lambda s: run_opencv(cascade, s, args.scale_factor,
+                                 args.min_neighbors, args.min_face),
+            None)
+
+    det_lists, box_tfs = {}, {}
+    for name, (run, stored_tf) in detectors.items():
+        det_lists[name] = run(samples)
+        tf = stored_tf
+        if fit_samples:
+            # Fitting on the eval folds themselves (only to store a transform)
+            # reuses the detections instead of running the detector twice.
+            fit_dets = (det_lists[name] if fit_samples == samples
+                        else run(fit_samples))
+            tf = fit_box_transform(fit_dets, fit_samples)
+        box_tfs[name] = tf
+        if tf is not None:
+            src = f"fitted on folds {fit_folds}" if fit_samples else "stored in .pkl"
+            print(f"\n[{name}] box transform ({src}): sw={tf[0]:.3f} "
+                  f"sh={tf[1]:.3f} dcx={tf[2]:+.3f} dcy={tf[3]:+.3f}")
+
+    if args.save_box_transform and clf is not None and box_tfs.get("ours"):
+        clf.box_transform = box_tfs["ours"]
+        with open(wpath, "wb") as f:
+            pickle.dump(clf, f)
+        print(f"Saved box_transform={clf.box_transform} into {wpath}")
+
+    runs = {}
+    for name, dets in det_lists.items():
+        runs[name] = dets
+        if box_tfs[name] is not None:
+            runs[f"{name}+box"] = [apply_box_transform(d, box_tfs[name])
+                                   for d in dets]
 
     for thr in iou_thrs:
         print(f"\n############ IoU >= {thr:.2f} ############")
         results = {}
-        for name, det in det_lists.items():
+        for name, det in runs.items():
             results[name] = evaluate_detector(name, det, samples, thr,
                                               fp_budgets)[0]
         if len(results) > 1:
             print(f"\n=== Comparison (same FDDB images, IoU>={thr:.2f}) ===")
-            hdr = f"{'detector':<16} {'AP':>6} {'recall':>7} {'prec':>6}"
+            hdr = f"{'detector':<20} {'AP':>6} {'recall':>7} {'prec':>6} {'R@100FP':>8}"
             print(hdr); print("-" * len(hdr))
             for name, m in results.items():
-                print(f"{name:<16} {m['ap']:>6.3f} {m['recall']:>7.3f} "
-                      f"{m['precision']:>6.3f}")
+                print(f"{name:<20} {m['ap']:>6.3f} {m['recall']:>7.3f} "
+                      f"{m['precision']:>6.3f} {m['recall_at_fp'][100]:>8.3f}")
 
 
 if __name__ == "__main__":

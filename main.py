@@ -16,8 +16,8 @@ import time
 import numpy as np
 
 from utils import (
-    draw_bounding_boxes, evaluate, get_pretty_time, load_image,
-    non_maximum_supression,
+    apply_box_transform, draw_bounding_boxes, evaluate, get_pretty_time,
+    load_image, non_maximum_supression,
 )
 from violajones import ViolaJones
 
@@ -218,23 +218,30 @@ def test(weights_path, data_dir):
             print(f"\t- {k}: {v:.3f}")
 
 
+# Best shipped model; used when no training checkpoint exists (fresh clone).
+DEFAULT_WEIGHTS = "weights/24/celeba_aligned__24_v2_s11_tuned.pkl"
+
+
 def pick_weights(path=None):
-    """Return `path` if given, otherwise the most recent checkpoint under weights/."""
+    """Return `path` if given, otherwise the most recent training checkpoint
+    under weights/, otherwise the best shipped model (DEFAULT_WEIGHTS)."""
     if path is not None:
         return path
     candidates = sorted(glob.glob("weights/**/cvj_weights_*.pkl", recursive=True),
                         key=os.path.getmtime)
-    if not candidates:
-        raise FileNotFoundError(
-            "No trained weights under weights/. Run `python main.py train ...` first.")
-    return candidates[-1]
+    if candidates:
+        return candidates[-1]
+    if os.path.exists(DEFAULT_WEIGHTS):
+        return DEFAULT_WEIGHTS
+    raise FileNotFoundError(
+        "No trained weights under weights/. Run `python main.py train ...` first.")
 
 
 def find_faces(weight_path=None, image_paths=None, output_dir="images/outputs",
                nms_threshold=0.3, nms_mode="weighted", nms_metric="hybrid",
                min_shift=None, scale_factor=None,
                min_face_size=None, max_face_size=None,
-               min_score=None):
+               min_score=None, pyramid="image", raw_boxes=False):
     weight_path = pick_weights(weight_path)
     print(f"Using weights: {weight_path}")
 
@@ -243,6 +250,10 @@ def find_faces(weight_path=None, image_paths=None, output_dir="images/outputs",
 
     os.makedirs(output_dir, exist_ok=True)
     clf = ViolaJones.load(weight_path)
+    box_tf = None if raw_boxes else getattr(clf, "box_transform", None)
+    print(f"Pyramid: {pyramid} | boxes: "
+          + (f"face (box_transform={tuple(round(v, 3) for v in box_tf)})"
+             if box_tf else "raw training window"))
 
     for face_path in image_paths:
         print(f"Detecting on {face_path}")
@@ -250,7 +261,7 @@ def find_faces(weight_path=None, image_paths=None, output_dir="images/outputs",
         regions = clf.find_faces(pil_img, growth=scale_factor, min_shift=min_shift,
                                  min_face_size=min_face_size,
                                  max_face_size=max_face_size,
-                                 min_score=min_score)
+                                 min_score=min_score, pyramid=pyramid)
         if regions:
             scores = [r[4] for r in regions if len(r) >= 5]
             score_stats = (f"  scores: min={min(scores):.3f} "
@@ -264,6 +275,7 @@ def find_faces(weight_path=None, image_paths=None, output_dir="images/outputs",
             regions = non_maximum_supression(regions, threshold=nms_threshold,
                                              mode=nms_mode, metric=nms_metric)
             print(f"\t- after NMS:  {len(regions)}")
+            regions = apply_box_transform(regions, box_tf)
             # for r in regions: print(f"\t  box: {tuple(int(v) for v in r[:4])} score={float(r[4]):.1f}" if len(r) >= 5 else f"\t  box: {tuple(int(v) for v in r[:4])}")
 
         drawn_img = draw_bounding_boxes(pil_img, list(regions), thickness=2)
@@ -405,6 +417,19 @@ if __name__ == "__main__":
                         metavar="PX",
                         help="Largest face size in image pixels. Stops the "
                              "pyramid once the window exceeds this.")
+    parser.add_argument("--detect-pyramid", choices=["image", "features"],
+                        default="image",
+                        help="How the scale pyramid is built. 'image' "
+                             "(default, as OpenCV) downsizes the image and "
+                             "runs the native training window. 'features' "
+                             "(legacy) scales the Haar rectangles instead; "
+                             "int truncation makes it let ~3.5x more "
+                             "background windows through. Kept only to "
+                             "reproduce pre-fix numbers.")
+    parser.add_argument("--raw-boxes", action="store_true",
+                        help="Draw the raw training-window boxes (tight "
+                             "eyes-to-mouth crops) instead of mapping them "
+                             "to face boxes with the model's box_transform.")
     parser.add_argument("--detect-min-score", type=float, default=None,
                         metavar="S",
                         help="Discard detections whose accumulated cascade "
@@ -456,6 +481,8 @@ if __name__ == "__main__":
                    scale_factor=args.detect_scale,
                    min_face_size=args.detect_min_face,
                    max_face_size=args.detect_max_face,
-                   min_score=args.detect_min_score)
+                   min_score=args.detect_min_score,
+                   pyramid=args.detect_pyramid,
+                   raw_boxes=args.raw_boxes)
 
     print("\n" + get_pretty_time(start_time, s="Total time: "))

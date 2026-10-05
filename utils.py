@@ -230,6 +230,39 @@ def draw_bounding_boxes(pil_image, regions, color="green", thickness=3):
     return source_img
 
 
+def apply_box_transform(regions, box_transform):
+    """
+    Map detector windows to face boxes in a target annotation convention.
+
+    A cascade fires on its *training window*, whose framing is whatever crop
+    convention the positives used: for every model in this repo, a tight
+    eyes-to-mouth CBCL-style crop. Benchmarks (and people) expect a face box
+    from forehead to chin. On FDDB that box is ~1.4× wider and ~2.1× taller
+    than our window (best model; up to 1.6× / 2.5× for the CBCL-only ones),
+    so a perfectly centred detection only reaches IoU ≈ 0.3
+    and can never count at IoU ≥ 0.5.
+
+    `box_transform = (sw, sh, dcx, dcy)` shifts each box centre by
+    (dcx·w, dcy·h) and rescales it to (sw·w, sh·h). Fitted per model on
+    held-out FDDB folds by `tools/eval_fddb.py --box-fit-folds`. Apply after
+    NMS (NMS should fuse the raw windows). None returns `regions` unchanged.
+    Extra fields after the 4 coords (e.g. the score) are carried through.
+    """
+    if box_transform is None or len(regions) == 0:
+        return regions
+    sw, sh, dcx, dcy = box_transform
+    out = []
+    for r in regions:
+        x1, y1, x2, y2 = (float(v) for v in r[:4])
+        w, h = x2 - x1, y2 - y1
+        cx = (x1 + x2) / 2 + dcx * w
+        cy = (y1 + y2) / 2 + dcy * h
+        nw, nh = w * sw, h * sh
+        out.append((cx - nw / 2, cy - nh / 2, cx + nw / 2, cy + nh / 2)
+                   + tuple(float(v) for v in r[4:]))
+    return out
+
+
 def non_maximum_supression(regions, threshold=0.3, mode="weighted",
                            metric="hybrid", iom_threshold=0.7):
     """
