@@ -67,7 +67,7 @@ from tqdm.auto import tqdm
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from utils import (apply_box_transform, get_pretty_time,  # noqa: E402
-                   non_maximum_supression)
+                   non_maximum_supression, record_training_step)
 from violajones import ViolaJones  # noqa: E402
 from main import pick_weights  # noqa: E402
 
@@ -439,6 +439,9 @@ def main():
 
     if args.save_box_transform and clf is not None and box_tfs.get("ours"):
         clf.box_transform = box_tfs["ours"]
+        record_training_step(clf, "box_fit", fddb_folds=fit_folds,
+                             box_transform=list(clf.box_transform),
+                             pyramid=args.pyramid, min_face=args.min_face)
         with open(wpath, "wb") as f:
             pickle.dump(clf, f)
         print(f"Saved box_transform={clf.box_transform} into {wpath}")

@@ -43,7 +43,7 @@ import numpy as np
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from utils import integral_image  # noqa: E402
+from utils import integral_image, record_training_step  # noqa: E402
 from violajones import ViolaJones  # noqa: E402
 
 
@@ -197,6 +197,11 @@ def main():
     # Apply and save
     for k, t in enumerate(tuned_T):
         clf.clfs[k].threshold = float(t)
+    record_training_step(clf, "tune_thresholds", source=args.weights,
+                         objective=args.objective,
+                         thresholds=[round(float(t), 4) for t in tuned_T],
+                         cbcl_metrics={k: round(float(tuned_m[k]), 4) for k in
+                                       ("recall", "specificity", "precision", "f1")})
     if args.out:
         out_path = args.out
     elif args.objective == "recall-at-spec":

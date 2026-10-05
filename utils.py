@@ -1,3 +1,5 @@
+import shlex
+import sys
 import time
 
 import numpy as np
@@ -5,6 +7,25 @@ from PIL import Image, ImageDraw
 from tqdm.auto import tqdm
 
 from features import RectangleRegion, HaarFeature  # noqa: F401  (re-exported for tests)
+
+
+def record_training_step(model, step, **fields):
+    """Append a provenance entry to `model.training_info["history"]`.
+
+    Every tool that changes a model (train, resume, truncate, threshold
+    tuning, box fitting, OpenCV conversion) records the exact command line
+    plus the resolved settings, so a `.pkl` on its own says how it was
+    produced. Read it back with `python main.py info --weights-path <pkl>`.
+    """
+    info = getattr(model, "training_info", None) or {}
+    info.setdefault("history", []).append({
+        "step": step,
+        "date": time.strftime("%Y-%m-%d %H:%M:%S"),
+        "command": "python " + " ".join(shlex.quote(a) for a in sys.argv),
+        **fields,
+    })
+    model.training_info = info
+    return info
 
 
 def load_image(image_path, as_numpy=False):

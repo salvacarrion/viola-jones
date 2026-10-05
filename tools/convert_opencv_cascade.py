@@ -26,6 +26,7 @@ import numpy as np
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from opencv_cascade import OpenCVCascade  # noqa: E402
+from utils import record_training_step  # noqa: E402
 
 
 def _floats(text):
@@ -149,6 +150,13 @@ def main():
     if not args.no_validate:
         validate(clf, args.cascade)
 
+    clf.training_info = {
+        "name": f"opencv_{args.cascade}",
+        "summary": ("OpenCV's pretrained Haar cascade, not trained here: "
+                    f"{os.path.basename(xml_path)} ported to this pipeline "
+                    "(window-level parity checked against cv2)."),
+    }
+    record_training_step(clf, "convert_opencv", xml=xml_path)
     out = args.out or f"weights/{clf.base_width}/opencv_{args.cascade}.pkl"
     os.makedirs(os.path.dirname(out), exist_ok=True)
     clf.save(out)

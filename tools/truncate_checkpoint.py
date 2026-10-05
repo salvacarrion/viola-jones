@@ -12,6 +12,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from violajones import ViolaJones
+from utils import record_training_step
 
 
 def main():
@@ -41,6 +42,8 @@ def main():
         p = Path(args.checkpoint)
         stem = p.stem if not p.stem.endswith(".pkl") else p.stem[:-4]
         out = str(p.parent / f"{stem}_trunc{args.keep_stages}.pkl")
+    record_training_step(clf, "truncate", source=args.checkpoint,
+                         kept_stages=args.keep_stages, dropped_stages=total - args.keep_stages)
     # clf.save appends .pkl, so strip it if present
     save_path = out[:-4] if out.endswith(".pkl") else out
     clf.save(save_path)

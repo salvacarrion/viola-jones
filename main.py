@@ -10,6 +10,7 @@ Workflow:
 
 import argparse
 import glob
+import json
 import os
 import time
 
@@ -17,7 +18,7 @@ import numpy as np
 
 from utils import (
     apply_box_transform, draw_bounding_boxes, evaluate, get_pretty_time,
-    load_image, non_maximum_supression,
+    load_image, non_maximum_supression, record_training_step,
 )
 from violajones import ViolaJones
 
@@ -59,6 +60,7 @@ def train(data_dir, layer_recall=0.99,
           min_cascade_recall=0.80, min_stage_negatives=0, resume_from=None,
           hard_neg_pool=None, very_hard_neg_pool=None,
           drop_low_score_pos=0.0, precompute_sort_index=False):
+    train_args = dict(locals())  # resolved settings, recorded in the .pkl
     bundles = _load_data(data_dir)
     train_pos = bundles["train_pos"]
     val_pos = bundles["val_pos"]
@@ -173,6 +175,14 @@ def train(data_dir, layer_recall=0.99,
     # Also patch resumed instance
     if resume_from is not None:
         clf.precompute_sort_index = precompute_sort_index
+    manifest_path = os.path.join(str(data_dir), "manifest.json")
+    manifest = None
+    if os.path.exists(manifest_path):
+        with open(manifest_path) as f:
+            manifest = json.load(f)
+    record_training_step(clf, "resume" if resume_from else "train",
+                         settings=train_args, data_manifest=manifest,
+                         stages_before=len(clf.clfs))
     clf.train(train_pos, val_pos, neg_pool,
               neg_seed=neg_seed,
               very_hard_pool=vh,
@@ -182,9 +192,47 @@ def train(data_dir, layer_recall=0.99,
               checkpoint_path=out_path,
               pos_cache_suffix=pos_cache_suffix,
               precompute_sort_index=precompute_sort_index)
+    clf.training_info["history"][-1]["stages_after"] = len(clf.clfs)
+    clf.save(out_path)
     print("Training finished!")
     print(f"Final weights -> {out_path}.pkl")
     return clf
+
+
+def info(weights_path):
+    """Print what a checkpoint is and how it was produced."""
+    weights_path = pick_weights(weights_path)
+    clf = ViolaJones.load(weights_path)
+    print(f"File:    {weights_path}")
+    print(f"Window:  {clf.base_width}×{clf.base_height}")
+    if hasattr(clf, "_cstages"):   # native OpenCV port
+        stumps = [len(cs["thr"]) for cs in clf._cstages]
+    else:
+        stumps = [len(stage.clfs) for stage in clf.clfs]
+        print(f"Thresholds: {[round(float(s.threshold), 3) for s in clf.clfs]}")
+    print(f"Stages:  {len(stumps)} ({sum(stumps)} weak classifiers: {stumps})")
+    print(f"Face-box transform (sw, sh, dcx, dcy): "
+          f"{getattr(clf, 'box_transform', None)}")
+    ti = getattr(clf, "training_info", None)
+    if not ti:
+        print("\nNo training record (checkpoint predates provenance tracking).")
+        return
+    for key in ("name", "summary", "note"):
+        if ti.get(key):
+            print(f"\n{key.capitalize()}: {ti[key]}")
+    for key in ("metrics",):
+        if ti.get(key):
+            print(f"\n{key.capitalize()}: {json.dumps(ti[key])}")
+    print("\nHistory:")
+    for i, h in enumerate(ti.get("history", []), 1):
+        when = f" ({h['date']})" if h.get("date") else ""
+        print(f"  {i}. {h['step']}{when}")
+        if h.get("command"):
+            print(f"     $ {h['command']}")
+        for k, v in h.items():
+            if k in ("step", "date", "command"):
+                continue
+            print(f"     {k}: {json.dumps(v) if isinstance(v, (dict, list)) else v}")
 
 
 def test(weights_path, data_dir):
@@ -288,10 +336,11 @@ def find_faces(weight_path=None, image_paths=None, output_dir="images/outputs",
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Viola-Jones face detector")
-    parser.add_argument("mode", choices=["train", "test", "detect"],
+    parser.add_argument("mode", choices=["train", "test", "detect", "info"],
                         help="train: fit cascade | "
                              "test: evaluate on CBCL benchmark | "
-                             "detect: run inference on images")
+                             "detect: run inference on images | "
+                             "info: show how a checkpoint was trained")
 
     # Common
     parser.add_argument("--data-dir", default="data/24",
@@ -470,6 +519,8 @@ if __name__ == "__main__":
               precompute_sort_index=args.precompute_sort_index)
     elif args.mode == "test":
         test(args.weights_path, args.data_dir)
+    elif args.mode == "info":
+        info(args.weights_path)
     elif args.mode == "detect":
         find_faces(weight_path=args.weights_path,
                    image_paths=args.detect_images,

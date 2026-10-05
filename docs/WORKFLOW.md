@@ -147,7 +147,7 @@ python main.py test \
     --weights-path weights/19/cbcl__19_v1_tuned.pkl
 ```
 
-The tuned F1 is the one to report. The raw-vs-tuned gap (~5-7 pp at 19×19) measures how much the on-the-fly calibration leaves on the table compared with a global optimisation afterwards.
+Every step above is recorded inside the `.pkl` (command, settings, data manifest); `python main.py info --weights-path <pkl>` prints that history. The tuned F1 is the one to report. The raw-vs-tuned gap (~5-7 pp at 19×19) measures how much the on-the-fly calibration leaves on the table compared with a global optimisation afterwards.
 
 **Tuner objectives:**
 
@@ -251,10 +251,8 @@ python main.py train \
 If a stage saturates during the resume (FPR above the new target) and you want to drop it before continuing:
 
 ```bash
-python tools/truncate_checkpoint.py \
-    --weights weights/19/cvj_weights_<ts>.pkl \
-    --keep-stages 12 \
-    --out weights/19/cbcl__19_v1.1.pkl
+python tools/truncate_checkpoint.py weights/19/cvj_weights_<ts>.pkl 12 \
+    --output weights/19/cbcl__19_v1.1.pkl
 ```
 
 ---
