@@ -2,7 +2,7 @@
 
 Detailed metrics for every training run, in chronological order. All numbers are on the **CBCL benchmark test split**: 472 faces / 23 573 non-faces. In-the-wild numbers for every model (FDDB) are in [OPENCV_COMPARISON_FINDINGS.md](OPENCV_COMPARISON_FINDINGS.md#per-model-folds-2-10-face-boxes-tuned-thresholds).
 
-Only three training runs ship in `weights/`, renamed for readability: `celeba_aligned__24_v2_s11_tuned` as `24/celeba.pkl` (⭐), `celeba_aligned+cbcl__19_v2_tuned` as `19/celeba_cbcl.pkl` and `cbcl__19_v2_tuned` as `19/cbcl.pkl`, plus the OpenCV port. Every checkpoint below under its original name, and the experiment-only scripts and tools that were removed in the final cleanup (`scripts/run_19_*.sh`, `tools/extend_stage.py`, `tools/benchmark_precompute.py`), are in the git history: `git checkout 1c7a789 -- weights/ scripts/ tools/`.
+Only three training runs ship in `weights/`, renamed for readability: `celeba_aligned__24_v2_s11_tuned` as `24/celeba.pkl` (⭐), `celeba_aligned+cbcl__19_v2_tuned` as `19/celeba_cbcl.pkl` and `cbcl__19_v2_tuned` as `19/cbcl.pkl`, plus the two OpenCV ports (`24/opencv_default.pkl`, `20/opencv_alt.pkl`). Every checkpoint below under its original name, and the experiment-only scripts and tools that were removed in the final cleanup (`scripts/run_19_*.sh`, `tools/extend_stage.py`, `tools/benchmark_precompute.py`), are in the git history: `git checkout 1c7a789 -- weights/ scripts/ tools/`.
 
 ## Summary
 

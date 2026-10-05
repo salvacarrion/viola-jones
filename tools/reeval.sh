@@ -89,6 +89,14 @@ if [ "${SKIP_FDDB:-0}" != "1" ]; then
     say "  (skipped: run section 4 first to build it)"
   fi
 
+  say ""; say "### FDDB  native port  weights/20/opencv_alt.pkl"
+  if [ -f weights/20/opencv_alt.pkl ]; then
+    runpy tools/eval_fddb.py --weights weights/20/opencv_alt.pkl \
+          --skip-opencv "${FD[@]}"
+  else
+    say "  (skipped: run section 4 first to build it)"
+  fi
+
   say ""; say "### FDDB  cv2:alt (reference)"
   runpy tools/eval_fddb.py --skip-ours --cascade alt "${FD[@]}"
 

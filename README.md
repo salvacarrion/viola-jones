@@ -45,7 +45,8 @@ Pretrained models (pick one with `--weights-path`):
 | `weights/24/celeba.pkl` ⭐ (default) | 24×24 | aligned CelebA faces | 0.589 / 0.471 |
 | `weights/19/celeba_cbcl.pkl` | 19×19 | aligned CelebA + CBCL faces | 0.578 / 0.483 |
 | `weights/19/cbcl.pkl` | 19×19 | CBCL faces | 0.539 / 0.475 |
-| `weights/24/opencv_default.pkl` | 24×24 | OpenCV's pretrained cascade, ported | 0.730 / 0.703 |
+| `weights/24/opencv_default.pkl` | 24×24 | OpenCV's pretrained `default` cascade, ported | 0.730 / 0.703 |
+| `weights/20/opencv_alt.pkl` | 20×20 | OpenCV's pretrained `alt` cascade, ported | 0.740 / 0.720 |
 
 See [docs/WORKFLOW.md](docs/WORKFLOW.md) for the full data-prep, training, tuning and evaluation recipes.
 
@@ -79,6 +80,7 @@ Full-image detection on [FDDB](http://vis-www.cs.umass.edu/fddb/) news photos. B
 | OpenCV `alt` (cv2) | 0.731 | 0.734 | 0.926 | 0.739 | 0.742 |
 | OpenCV `default` (cv2) | 0.726 | 0.742 | 0.756 | 0.737 | 0.753 |
 | OpenCV `default` (our native port) | 0.703 | 0.720 | 0.637 | 0.730 | 0.745 |
+| OpenCV `alt` (our native port) | 0.720 | 0.732 | 0.708 | 0.740 | 0.750 |
 | **Ours ⭐ (`weights/24/celeba.pkl`)** | **0.471** | 0.596 | 0.250 | **0.589** | 0.716 |
 
 Our recall is close to OpenCV's; precision is not. On CBCL's tight crops the relation flips (ours F1 0.661, OpenCV 0.000). Protocol, the two inference/evaluation bugs fixed at the end of the project, and per-model numbers: [docs/OPENCV_COMPARISON_FINDINGS.md](docs/OPENCV_COMPARISON_FINDINGS.md).

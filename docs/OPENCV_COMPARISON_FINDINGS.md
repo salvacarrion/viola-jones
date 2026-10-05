@@ -74,6 +74,7 @@ FDDB (Face Detection Data Set and Benchmark, UMass) is the canonical Viola-Jones
 | OpenCV `alt` (cv2) +box | 0.731 | 0.734 | 0.926 | 0.739 | 0.742 | 0.936 | 0.716 |
 | OpenCV `default` (cv2) +box | 0.726 | 0.742 | 0.756 | 0.737 | 0.753 | 0.767 | 0.623 |
 | OpenCV `default` (our native port) +box | 0.703 | 0.720 | 0.637 | 0.730 | 0.745 | 0.659 | 0.641 |
+| OpenCV `alt` (our native port) +box | 0.720 | 0.732 | 0.708 | 0.740 | 0.750 | 0.725 | 0.668 |
 | **Ours 24×24 CelebA v2 ⭐ +box** | **0.471** | 0.596 | 0.250 | **0.589** | 0.716 | 0.300 | 0.297 |
 | Ours 24×24 CBCL smoke +box | 0.503 | 0.575 | 0.513 | 0.561 | 0.629 | 0.561 | 0.319 |
 | Ours 19×19 CelebA<sub>aligned</sub>+CBCL v2 +box | 0.483 | 0.600 | 0.291 | 0.578 | 0.698 | 0.338 | 0.297 |
@@ -170,6 +171,8 @@ The evaluator follows OpenCV's `HaarEvaluator` exactly, in the "scale the image"
 | **opencv_default.pkl (native, our NMS)** | 0.725 | 0.741 | 0.655 | 0.627 | 0.660 | 0.583 |
 | opencv:default (cv2) +box | 0.737 | 0.753 | 0.767 | 0.726 | 0.742 | 0.756 |
 | **opencv_default.pkl (native) +box** | 0.730 | 0.745 | 0.659 | 0.703 | 0.720 | 0.637 |
+| **opencv_alt.pkl (native, our NMS)** | 0.735 | 0.746 | 0.721 | 0.637 | 0.669 | 0.647 |
+| **opencv_alt.pkl (native) +box** | 0.740 | 0.750 | 0.725 | 0.720 | 0.732 | 0.708 |
 
 The native port tracks cv2 closely (AP@0.3 0.725 vs 0.736); the residual gap is grouping (NMS vs `minNeighbors`, which costs some precision) + pyramid resampling, not the cascade math. For cv2-identical numbers (with `minNeighbors`), use `tools/baseline_opencv.py` / the cv2 path in `tools/eval_fddb.py`. Detection false positives in `main.py detect` clean up with `--detect-min-score` (the native model's raw scores run ~70–330, so e.g. `--detect-min-score 150` keeps the confident boxes).
 
